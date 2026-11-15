@@ -6,6 +6,7 @@ import {
   selectHistoryBase,
   selectNewestHistoryChange,
 } from '../../core/system-catalog/index.js'
+import { isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import type { SyncHistoryPoint } from '../types.js'
 import { refreshCoordinatorState } from './coordinator-authority.js'
@@ -25,7 +26,7 @@ async function currentGroupState(engine: ReplicationEngine): Promise<Replication
     return await refreshCoordinatorState(engine)
   } catch (err: unknown) {
     reportEngineError(engine, err, 'repair-rebuild-confirmation', true)
-    return engine.coordinatorState
+    throw err
   }
 }
 
@@ -33,7 +34,7 @@ async function currentGroupState(engine: ReplicationEngine): Promise<Replication
  * Returns whether a node that serves its data may start the full copy of a rebuild, reading the group's state again
  * first when the group's repairing flag started that rebuild. An operator who clears the flag before the copy starts
  * cancels the rebuild, so the node keeps its rows and serves them as before. When the coordinator cannot answer, the
- * node decides from the last group state that it read.
+ * node waits for a later read before it starts the copy.
  *
  * @param engine - The node's engine.
  * @returns True for a copy that the node's own history requires, and for a rebuild whose flag the group still holds.
@@ -45,6 +46,8 @@ export async function rebuildStillRequested(engine: ReplicationEngine): Promise<
   if (!rejoin.rebuildingForRepairFlag) return true
   if (asksThisNodeToRebuild(engine, await currentGroupState(engine))) return true
   rejoin.rebuildingForRepairFlag = false
+  rejoin.repairGeneration++
+  engine.history.keptBeforeCopyTerm = null
   return false
 }
 
@@ -77,6 +80,7 @@ export async function requestHistoryPoint(
   keepsBeforeCopy: boolean,
 ): Promise<void> {
   const history = engine.history
+  const repairGeneration = engine.rejoin.repairGeneration
   const requestId = randomUUID()
   if (!keepsBeforeCopy) history.reconciling = true
   history.resumeRequest.start(requestId, term, keepsBeforeCopy)
@@ -86,7 +90,7 @@ export async function requestHistoryPoint(
     history.resumeRequest.clear()
     if (!(await rebuildStillRequested(engine))) return
     history.keptBeforeCopyTerm = term
-    await startFullCopy(engine)
+    await startFullCopy(engine, repairGeneration)
     return
   }
   await engine.config.transport.requestSync(
@@ -119,6 +123,7 @@ export async function keepUnsharedChanges(
   point: SyncHistoryPoint | undefined,
   term: bigint,
 ): Promise<void> {
+  const repairGeneration = engine.rejoin.repairGeneration
   const primaryId = engine.coordinatorState?.currentPrimary?.nodeId
   if (!engine.isCoordinatorMode() || !servesItsData(engine.syncState.phase)) return
   const origins = historyOrigins(engine)
@@ -133,7 +138,7 @@ export async function keepUnsharedChanges(
       }
     }),
   )
-  engine.history.keptBeforeCopyTerm = term
+  if (repairGeneration === engine.rejoin.repairGeneration) engine.history.keptBeforeCopyTerm = term
 }
 
 /**
@@ -141,13 +146,26 @@ export async function keepUnsharedChanges(
  * node that is already copying keeps its copy going.
  *
  * @param engine - The node's engine.
+ * @param repairGeneration - The repair request under which the caller prepared the copy.
  * @returns A promise that settles once the node has sent its sync request.
  *
  * @internal
  */
-export async function startFullCopy(engine: ReplicationEngine): Promise<void> {
-  engine.history.resumeRequest.clear()
+export async function startFullCopy(
+  engine: ReplicationEngine,
+  repairGeneration = engine.rejoin.repairGeneration,
+): Promise<void> {
+  if (!engine.running || repairGeneration !== engine.rejoin.repairGeneration) return
+  if (!(await rebuildStillRequested(engine))) return
+  if (!engine.running || repairGeneration !== engine.rejoin.repairGeneration) return
+  const state = engine.coordinatorState
+  if (engine.isCoordinatorMode()) {
+    if (!state || !state.currentPrimary || !isGroupMember(state, engine.nodeId)) return
+    if (state.currentPrimary.nodeId === engine.nodeId || state.faultedNodeIds.includes(engine.nodeId)) return
+    if (engine.history.keptBeforeCopyTerm !== state.primaryTerm) return
+  }
   if (!servesItsData(engine.syncState.phase)) return
+  engine.history.resumeRequest.clear()
   engine.highestSourceSeqSeen = 0n
   engine.syncState = { ...initialSyncState(), phase: 'pending' }
   await engine.log.setSyncMeta('pending')
@@ -167,6 +185,7 @@ export async function startFullCopy(engine: ReplicationEngine): Promise<void> {
  */
 export async function restartWithFullCopy(engine: ReplicationEngine): Promise<void> {
   if (!servesItsData(engine.syncState.phase)) return
+  const repairGeneration = engine.rejoin.repairGeneration
   const state = engine.coordinatorState
   const primaryId = state?.currentPrimary?.nodeId
   const history = engine.history
@@ -177,7 +196,7 @@ export async function restartWithFullCopy(engine: ReplicationEngine): Promise<vo
     primaryId === engine.nodeId ||
     history.keptBeforeCopyTerm === state.primaryTerm
   ) {
-    if (await rebuildStillRequested(engine)) await startFullCopy(engine)
+    if (await rebuildStillRequested(engine)) await startFullCopy(engine, repairGeneration)
     return
   }
   if (history.resumeRequest.awaitsAnswerIn(state.primaryTerm, engine.syncAckTimeoutMs)) return

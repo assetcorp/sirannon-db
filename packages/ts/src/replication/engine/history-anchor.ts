@@ -197,6 +197,7 @@ export async function handleHistoryAnswer(
   complete: SyncComplete,
   fromPeerId: string,
 ): Promise<boolean> {
+  const repairGeneration = engine.rejoin.repairGeneration
   const history = engine.history
   if (!history.resumeRequest.matches(complete.requestId)) return false
   if (complete.primaryTerm !== history.resumeRequest.term) return false
@@ -225,7 +226,7 @@ export async function handleHistoryAnswer(
       complete.primaryTerm,
     )
   }
-  await startFullCopy(engine)
+  await startFullCopy(engine, repairGeneration)
   return true
 }
 
@@ -262,13 +263,14 @@ export function handleHistoryRefusal(engine: ReplicationEngine, ack: SyncAck, fr
  * @internal
  */
 export async function handleHistoryCopyBatch(engine: ReplicationEngine, requestId: string): Promise<boolean> {
+  const repairGeneration = engine.rejoin.repairGeneration
   const request = engine.history.resumeRequest
   if (!request.matches(requestId)) return false
   const term = request.term
   request.clear()
   if (!(await rebuildStillRequested(engine))) return true
   if (term !== null) await keepUnsharedChanges(engine, undefined, term)
-  await startFullCopy(engine)
+  await startFullCopy(engine, repairGeneration)
   return true
 }
 

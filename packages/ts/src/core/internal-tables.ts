@@ -111,14 +111,15 @@ interface StatementState {
   verb: string
   depth: number
   namesCatalogue: boolean
+  pragmaValue: boolean
 }
 
 function freshStatement(): StatementState {
-  return { verb: '', depth: 0, namesCatalogue: false }
+  return { verb: '', depth: 0, namesCatalogue: false, pragmaValue: false }
 }
 
 function pragmaError(name: string, state: StatementState): string | null {
-  if (state.verb !== 'pragma') return null
+  if (state.verb !== 'pragma' || state.pragmaValue) return null
   return FORBIDDEN_PRAGMA_MESSAGES.get(name.toLowerCase()) ?? null
 }
 
@@ -177,7 +178,7 @@ function scan(sql: string): string | null {
     }
 
     if (c === "'") {
-      if (state.verb === 'pragma') {
+      if (state.verb === 'pragma' && !state.pragmaValue) {
         const literal = readDelimited(sql, i, "'")
         const error = pragmaError(literal.value, state)
         if (error) return error
@@ -225,6 +226,7 @@ function scan(sql: string): string | null {
       continue
     }
 
+    if (state.verb === 'pragma' && (c === '(' || c === '=')) state.pragmaValue = true
     if (c === '(') state.depth++
     else if (c === ')' && state.depth > 0) state.depth--
     i++

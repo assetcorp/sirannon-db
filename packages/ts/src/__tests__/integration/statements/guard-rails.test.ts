@@ -234,6 +234,31 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
 })
 
 describe.each(DRIVER_PLACEMENTS)('statement prefixes with $label', ({ driver, writerWorker }) => {
+  it('accepts pragma values that refer to tables with reserved pragma names', async () => {
+    const path = workspace.path('pragma-values.db')
+    const db = await workspace.registry({ driver: driver() }).open('pragma-values', path, { writerWorker })
+    for (const table of ['temp_store_directory', 'data_store_directory', 'writable_schema']) {
+      await db.execute(`CREATE TABLE ${table} (id INTEGER PRIMARY KEY, body TEXT)`)
+    }
+    for (const sql of [
+      "PRAGMA table_info('temp_store_directory')",
+      'PRAGMA main.table_info = "writable_schema"',
+      'PRAGMA table_info([data_store_directory])',
+      'PRAGMA table_info(temp_store_directory)',
+    ]) {
+      const expected = readRaw(path, sql).map(row => ({
+        ...row,
+        cid: Number(row.cid),
+        notnull: Number(row.notnull),
+        pk: Number(row.pk),
+      }))
+      expect(expected).toHaveLength(2)
+      expect(await db.query(sql)).toEqual(expected)
+    }
+    expect(processTempStoreDirectory()).toEqual([])
+    expect(processTempStoreDirectory(true)).toEqual([])
+  })
+
   it('refuses reserved statements after a byte-order mark across calls and database reopenings', async () => {
     const path = workspace.path('prefixes.db')
     const copy = workspace.path('copy.db')

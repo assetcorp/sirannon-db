@@ -224,6 +224,7 @@ export async function handleHistoryAnswer(
       engine,
       complete.resumed === true ? complete.historyPoint : undefined,
       complete.primaryTerm,
+      repairGeneration,
     )
   }
   await startFullCopy(engine, repairGeneration)
@@ -269,7 +270,7 @@ export async function handleHistoryCopyBatch(engine: ReplicationEngine, requestI
   const term = request.term
   request.clear()
   if (!(await rebuildStillRequested(engine))) return true
-  if (term !== null) await keepUnsharedChanges(engine, undefined, term)
+  if (term !== null) await keepUnsharedChanges(engine, undefined, term, repairGeneration)
   await startFullCopy(engine, repairGeneration)
   return true
 }

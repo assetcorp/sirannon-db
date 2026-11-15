@@ -60,6 +60,12 @@ describe("statements that reach Sirannon's own tables, the SQLite catalogue, or 
     const attached = join(dir, 'smuggled.db')
     const copy = join(dir, 'copy.db')
     const refused = [
+      `\ufeffVACUUM INTO '${copy}'`,
+      `; /* prefix */ \ufeffVACUUM 'main' INTO '${copy}'`,
+      `\ufeffATTACH '${attached}' AS other`,
+      `\ufeffPRAGMA 'temp_store_directory' = '${dir}'`,
+      `\ufeffPRAGMA data_store_directory = '${dir}'`,
+      '\ufeffPRAGMA writable_schema = 1',
       `VACUUM INTO '${copy}'`,
       `vacuum main into '${copy}'`,
       `VACUUM 'main' /* then */ INTO '${copy}'`,

@@ -1,8 +1,9 @@
 import { existsSync } from 'node:fs'
+import { DatabaseSync } from 'node:sqlite'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
-import { columnRaw, createWorkspace, readRaw, type Workspace, WRITER_PLACEMENTS } from './harness.js'
+import { columnRaw, createWorkspace, DRIVER_PLACEMENTS, readRaw, type Workspace, WRITER_PLACEMENTS } from './harness.js'
 
 type EntryPoint = [label: string, call: (db: Database, sql: string) => Promise<unknown>]
 
@@ -45,8 +46,8 @@ afterEach(async () => {
   await workspace.dispose()
 })
 
-function processTempStoreDirectory(): unknown {
-  const raw = new BetterSqlite3(':memory:')
+function processTempStoreDirectory(node = false): unknown {
+  const raw = node ? new DatabaseSync(':memory:') : new BetterSqlite3(':memory:')
   try {
     return raw.prepare('PRAGMA temp_store_directory').all()
   } finally {
@@ -189,6 +190,10 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     const { db, path } = await openShop()
     await db.execute('CREATE TABLE my_sqlite_backup (attach TEXT, writable_schema TEXT)')
     await db.execute('CREATE TABLE orders_sirannon_archive (id INTEGER PRIMARY KEY)')
+    await db.execute('CREATE TABLE café_sirannon_archive (id INTEGER PRIMARY KEY)')
+    await db.execute('INSERT INTO café_sirannon_archive VALUES (1)')
+    expect(await db.query('SELECT id FROM café_sirannon_archive')).toEqual([{ id: 1 }])
+    expect(columnRaw(path, 'SELECT id FROM café_sirannon_archive')).toEqual([1n])
     const bodies = [
       '_sirannon_changes',
       "it's sqlite_master and _sirannon_meta",
@@ -224,5 +229,39 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     await db.execute('VACUUM main')
     expect(columnRaw(path, 'SELECT count(*) FROM notes')).toEqual([0n])
     expect(await db.query("PRAGMA journal_mode = 'wal'")).toEqual([{ journal_mode: 'wal' }])
+  })
+})
+
+describe.each(DRIVER_PLACEMENTS)('statement prefixes with $label', ({ driver, writerWorker }) => {
+  it('refuses reserved statements after a byte-order mark across calls and database reopenings', async () => {
+    const path = workspace.path('prefixes.db')
+    const copy = workspace.path('copy.db')
+    const attached = workspace.path('attached.db')
+    const refused = [
+      `\ufeffVACUUM INTO '${copy}'`,
+      `; /* prefix */ \ufeff\ufeffVACUUM 'main' INTO '${copy}'`,
+      `\ufeffATTACH '${attached}' AS other`,
+      `\ufeffPRAGMA main.'temp_store_directory' = '${workspace.path('')}'`,
+      `\ufeffPRAGMA data_store_directory = '${workspace.path('')}'`,
+      '\ufeffPRAGMA writable_schema = 1',
+    ]
+    for (let opening = 0; opening < 2; opening++) {
+      const registry = workspace.registry({ driver: driver() })
+      const db = await registry.open('prefixes', path, { writerWorker })
+      await db.execute('CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY)')
+      for (const sql of refused) {
+        for (const [label, call] of ENTRY_POINTS) {
+          await expect(call(db, sql), `${label}: ${sql}`).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+        }
+        await expect(db.live(sql)).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+      }
+      await db.execute('\ufeffVACUUM')
+      await db.execute('\ufeffVACUUM main')
+      expect(existsSync(copy)).toBe(false)
+      expect(existsSync(attached)).toBe(false)
+      expect(processTempStoreDirectory()).toEqual([])
+      expect(processTempStoreDirectory(true)).toEqual([])
+      await registry.shutdown()
+    }
   })
 })

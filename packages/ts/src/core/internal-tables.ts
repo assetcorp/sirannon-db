@@ -94,7 +94,7 @@ export function assertSqlAllowed(sql: string): void {
 }
 
 function isWordStart(c: string): boolean {
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_'
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_' || c >= '\u0080'
 }
 
 function isWordPart(c: string): boolean {
@@ -154,7 +154,7 @@ function scan(sql: string): string | null {
   while (i < n) {
     const c = sql[i]
 
-    if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v') {
+    if (c === ' ' || c === '\t' || c === '\n' || c === '\r' || c === '\f' || c === '\v' || c === '\ufeff') {
       i++
       continue
     }

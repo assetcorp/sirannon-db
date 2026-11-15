@@ -1,3 +1,16 @@
+## 0.4.2 (2026-11-15)
+
+### 🩹 Fixes
+
+- **core:** refuse VACUUM INTO and the temp_store_directory and data_store_directory pragmas with FORBIDDEN_SQL ([6f20428](https://github.com/assetcorp/sirannon-db/commit/6f20428))
+- **core:** recognise SQLite byte-order marks and Unicode identifiers ([3ddedb7](https://github.com/assetcorp/sirannon-db/commit/3ddedb7))
+- **core:** refuse reserved statements after EXPLAIN prefixes ([c5e06bf](https://github.com/assetcorp/sirannon-db/commit/c5e06bf))
+- **core:** distinguish reserved pragma names from argument values ([703b0fa](https://github.com/assetcorp/sirannon-db/commit/703b0fa))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.4.1 (2026-11-15)
 
 ### 🚀 Features

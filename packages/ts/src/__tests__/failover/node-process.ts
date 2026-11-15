@@ -218,7 +218,7 @@ export class FailoverNodeProcess {
   }
 
   async copyTraffic(
-    action: 'hold' | 'release' | 'count',
+    action: 'hold' | 'release' | 'count' | 'received',
     kind?: 'request' | 'batch' | 'ack',
     peerId?: string,
   ): Promise<number> {

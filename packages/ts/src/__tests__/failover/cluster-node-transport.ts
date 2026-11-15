@@ -11,12 +11,21 @@ import {
 import { CopyTrafficHold } from './copy-traffic-hold.js'
 
 export const copyTraffic = new CopyTrafficHold()
+const receivedCopyRequests = new Map<string, number>()
 
 export function proxiedTransportClass(
   Base: typeof GrpcReplicationTransport,
   endpoints: Record<string, string>,
 ): typeof GrpcReplicationTransport {
   return class extends Base {
+    override onSyncRequested(handler: Parameters<GrpcReplicationTransport['onSyncRequested']>[0]): void {
+      super.onSyncRequested((request, peerId) => {
+        const handling = handler(request, peerId)
+        if (!request.historyTail) receivedCopyRequests.set(peerId, (receivedCopyRequests.get(peerId) ?? 0) + 1)
+        return handling
+      })
+    }
+
     override async requestSync(peerId: string, request: SyncRequest): Promise<void> {
       if (!request.historyTail) await copyTraffic.pass('request', peerId)
       return super.requestSync(peerId, request)
@@ -49,6 +58,7 @@ export async function handleTransportCommand(
   payload: Record<string, unknown>,
 ): Promise<number | null | undefined> {
   if (command === 'copyTraffic') {
+    if (payload.action === 'received') return receivedCopyRequests.get(stringPayload(payload, 'peerId')) ?? 0
     return copyTraffic.configure(
       stringPayload(payload, 'action'),
       typeof payload.kind === 'string' ? payload.kind : undefined,

@@ -28,6 +28,7 @@ const LOOPBACK_HOST = '127.0.0.1'
 const DOCKER_DESKTOP_HOST_ALIAS = 'host.docker.internal'
 const LISTEN_PORT_FLOOR = 10_000
 const LISTEN_PORT_CEILING = 32_767
+const PORTS_THAT_FETCH_REFUSES = new Set([10_080])
 const LINUX_EPHEMERAL_PORT_RANGE_FILE = '/proc/sys/net/ipv4/ip_local_port_range'
 
 const handedOutPorts = new Set<number>()
@@ -212,7 +213,7 @@ export async function allocatePort(): Promise<number> {
   const candidates = LISTEN_PORT_CEILING - LISTEN_PORT_FLOOR + 1
   for (let attempt = 0; attempt < candidates; attempt++) {
     const port = LISTEN_PORT_FLOOR + ((nextListenPortOffset + attempt) % candidates)
-    if (handedOutPorts.has(port) || ephemeralPortRange.includes(port)) continue
+    if (handedOutPorts.has(port) || ephemeralPortRange.includes(port) || PORTS_THAT_FETCH_REFUSES.has(port)) continue
     if (!(await loopbackPortIsFree(port))) continue
     nextListenPortOffset = (port - LISTEN_PORT_FLOOR + 1) % candidates
     handedOutPorts.add(port)

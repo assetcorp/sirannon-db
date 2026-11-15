@@ -276,7 +276,7 @@ export function helloOutcome(
   port: number,
   identity: PeerIdentity | 'plaintext',
   claimedNodeId: string,
-  opening: 'hello' | 'ack' = 'hello',
+  opening: 'hello' | 'ack' | 'nothing' = 'hello',
 ) {
   const channelCredentials =
     identity === 'plaintext'
@@ -302,6 +302,7 @@ export function helloOutcome(
     })
     call.on('error', (error: ServiceError) => finish({ answeredBy: null, code: error.code }))
     call.on('end', () => finish({ answeredBy: null, code: null }))
+    if (opening === 'nothing') return
     if (opening === 'ack') {
       call.write({ ack: { batchId: '', ackedSeq: 1n, nodeId: claimedNodeId, groupId: '', primaryTerm: 0n } })
       return

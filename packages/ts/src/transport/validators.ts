@@ -34,7 +34,8 @@ export function isValidAck(ack: unknown): ack is ReplicationAck {
     typeof a.ackedSeq === 'bigint' &&
     typeof a.nodeId === 'string' &&
     optionalString(a.groupId) &&
-    optionalBigint(a.primaryTerm)
+    optionalBigint(a.primaryTerm) &&
+    optionalString(a.copyRequestId)
   )
 }
 

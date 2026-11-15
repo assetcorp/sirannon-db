@@ -60,6 +60,7 @@ message AckPayload {
   string node_id = 3;
   string group_id = 4;
   int64 primary_term = 5;
+  string copy_request_id = 6;
 }
 
 message Hello {

@@ -304,7 +304,9 @@ export function helloOutcome(
     call.on('end', () => finish({ answeredBy: null, code: null }))
     if (opening === 'nothing') return
     if (opening === 'ack') {
-      call.write({ ack: { batchId: '', ackedSeq: 1n, nodeId: claimedNodeId, groupId: '', primaryTerm: 0n } })
+      call.write({
+        ack: { batchId: '', ackedSeq: 1n, nodeId: claimedNodeId, groupId: '', primaryTerm: 0n, copyRequestId: '' },
+      })
       return
     }
     call.write({

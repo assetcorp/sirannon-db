@@ -78,6 +78,7 @@ export interface AckPayload {
   nodeId: string;
   groupId: string;
   primaryTerm: bigint;
+  copyRequestId: string;
 }
 
 export interface Hello {
@@ -1111,7 +1112,7 @@ export const BatchPayload: MessageFns<BatchPayload> = {
 };
 
 function createBaseAckPayload(): AckPayload {
-  return { batchId: "", ackedSeq: 0n, nodeId: "", groupId: "", primaryTerm: 0n };
+  return { batchId: "", ackedSeq: 0n, nodeId: "", groupId: "", primaryTerm: 0n, copyRequestId: "" };
 }
 
 export const AckPayload: MessageFns<AckPayload> = {
@@ -1136,6 +1137,9 @@ export const AckPayload: MessageFns<AckPayload> = {
         throw new globalThis.Error("value provided for field message.primaryTerm of type int64 too large");
       }
       writer.uint32(40).int64(message.primaryTerm);
+    }
+    if (message.copyRequestId !== "") {
+      writer.uint32(50).string(message.copyRequestId);
     }
     return writer;
   },
@@ -1187,6 +1191,14 @@ export const AckPayload: MessageFns<AckPayload> = {
           message.primaryTerm = reader.int64() as bigint;
           continue;
         }
+        case 6: {
+          if (tag !== 50) {
+            break;
+          }
+
+          message.copyRequestId = reader.string();
+          continue;
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break;
@@ -1223,6 +1235,11 @@ export const AckPayload: MessageFns<AckPayload> = {
         : isSet(object.primary_term)
         ? BigInt(object.primary_term)
         : 0n,
+      copyRequestId: isSet(object.copyRequestId)
+        ? globalThis.String(object.copyRequestId)
+        : isSet(object.copy_request_id)
+        ? globalThis.String(object.copy_request_id)
+        : "",
     };
   },
 
@@ -1243,6 +1260,9 @@ export const AckPayload: MessageFns<AckPayload> = {
     if (message.primaryTerm !== 0n) {
       obj.primaryTerm = message.primaryTerm.toString();
     }
+    if (message.copyRequestId !== "") {
+      obj.copyRequestId = message.copyRequestId;
+    }
     return obj;
   },
 
@@ -1256,6 +1276,7 @@ export const AckPayload: MessageFns<AckPayload> = {
     message.nodeId = object.nodeId ?? "";
     message.groupId = object.groupId ?? "";
     message.primaryTerm = object.primaryTerm ?? 0n;
+    message.copyRequestId = object.copyRequestId ?? "";
     return message;
   },
 };

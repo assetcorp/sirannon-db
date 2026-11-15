@@ -5,6 +5,7 @@ const PRIMARY_TERM_START_META_KEY = 'replication_primary_term_start'
 const ANCHORED_TERM_META_KEY = 'replication_anchored_term'
 const HISTORY_BASE_META_KEY = 'replication_history_base'
 const QUARANTINED_META_KEY = 'replication_quarantined'
+const COPY_REQUEST_META_KEY = 'replication_copy_request_id'
 const DECIMAL_DIGITS = /^\d+$/
 
 /**
@@ -155,6 +156,33 @@ export async function selectHistoryBase(conn: SQLiteConnection): Promise<StoredH
 export async function upsertHistoryBase(conn: SQLiteConnection, point: StoredHistoryPoint | null): Promise<void> {
   await ensureMetaTable(conn)
   await upsertMetaValue(conn, HISTORY_BASE_META_KEY, point ? JSON.stringify({ hlc: point.hlc, txId: point.txId }) : '')
+}
+
+/**
+ * Returns the request ID of the last full copy that this node completed, or null before it completes one.
+ *
+ * @param conn - The connection to read through.
+ * @returns That request ID, or null when none is recorded.
+ *
+ * @internal
+ */
+export async function selectCopyRequestId(conn: SQLiteConnection): Promise<string | null> {
+  await ensureMetaTable(conn)
+  const raw = await selectMetaValue(conn, COPY_REQUEST_META_KEY)
+  return raw === null || raw === '' ? null : raw
+}
+
+/**
+ * Records the request ID of the full copy that this node has completed, which every later acknowledgement carries.
+ *
+ * @param conn - The connection to write through.
+ * @param requestId - The completed copy's request ID.
+ *
+ * @internal
+ */
+export async function upsertCopyRequestId(conn: SQLiteConnection, requestId: string): Promise<void> {
+  await ensureMetaTable(conn)
+  await upsertMetaValue(conn, COPY_REQUEST_META_KEY, requestId)
 }
 
 /**

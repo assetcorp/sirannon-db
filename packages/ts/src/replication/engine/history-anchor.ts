@@ -8,6 +8,7 @@ import {
   selectMaxChangeSeq,
   setForeignKeysEnabled,
   upsertAnchoredTerm,
+  upsertCopyRequestId,
   upsertHistoryBase,
   upsertQuarantined,
 } from '../../core/system-catalog/index.js'
@@ -298,7 +299,8 @@ async function rollBack(engine: ReplicationEngine, complete: SyncComplete, fromP
  * change-log history and column versions from before the copy, which no longer describe its rows, and remembers the
  * copy's newest history transaction. In the same transaction it keeps only
  * the applied positions in the source's log up to the copy, takes the copy's term as its reconciled term, and deletes
- * its quarantine record. When the group shows the replica as repairing in the copy's term, the replica also notes
+ * its quarantine record, and it records the copy's request ID, which every acknowledgement that it sends afterwards
+ * carries as proof of the copy. When the group shows the replica as repairing in the copy's term, the replica also notes
  * that it has finished the copy that rejoins it, so that it can ask for admission to the in-sync set.
  *
  * @param engine - The replica's engine.
@@ -330,8 +332,10 @@ export async function recordCopiedHistory(
       await deleteAppliedChangesAfterSeq(tx, fromPeerId, complete.snapshotSeq)
       await deletePeerState(tx, fromPeerId)
       await upsertAnchoredTerm(tx, term)
+      await upsertCopyRequestId(tx, complete.requestId)
     }),
   )
+  history.copyRequestId = complete.requestId
   engine.rejoin.quarantineRecorded = false
   const state = engine.coordinatorState
   if (state?.primaryTerm === term && state.repairingNodeIds.includes(engine.nodeId)) engine.rejoin.copiedTerm = term

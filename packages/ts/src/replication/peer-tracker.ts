@@ -82,10 +82,10 @@ export class PeerTracker {
     this.connectionAcks.delete(nodeId)
   }
 
-  onAckReceived(nodeId: string, ackedSeq: bigint): void {
+  onAckReceived(nodeId: string, ackedSeq: bigint, credited = true): void {
     const connectionAcked = this.connectionAcks.get(nodeId)
     const peer = this.peers.get(nodeId)
-    if (peer?.connected && (connectionAcked === undefined || ackedSeq > connectionAcked)) {
+    if (credited && peer?.connected && (connectionAcked === undefined || ackedSeq > connectionAcked)) {
       this.connectionAcks.set(nodeId, ackedSeq)
     }
     if (peer && ackedSeq > peer.lastAckedSeq) {

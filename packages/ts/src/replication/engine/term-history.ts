@@ -4,6 +4,7 @@ import {
   deletePeerStates,
   deletePrimaryTermStart,
   selectAnchoredTerm,
+  selectCopyRequestId,
   selectHistoryTransaction,
   selectMaxHistoryChangeSeq,
   selectNewestHistoryChange,
@@ -17,71 +18,12 @@ import { StalePrimaryError } from '../errors.js'
 import type { SyncHistoryPoint, SyncRequest } from '../types.js'
 import { FIRST_PRIMARY_TERM } from './constants.js'
 import { hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
+import { resetJoinerForCopy } from './copy-proof.js'
 import type { ReplicationEngine } from './engine.js'
 import { restartLagClock } from './in-sync-lag.js'
 import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
+import { ResumeRequest } from './resume-request.js'
 import { unrefTimer } from './timers.js'
-
-/**
- * Holds the sync request in which this replica names its newest history transaction to the primary, while the
- * replica waits for the answer.
- *
- * @internal
- */
-export class ResumeRequest {
-  /** Identifies the pending request, or is null when none is pending. */
-  id: string | null = null
-  /** Holds the primary term in which this replica sent the pending request. */
-  term: bigint | null = null
-  /** Holds the time in milliseconds at which this replica sent the pending request, so that it resends a lost one. */
-  requestedAt = 0
-  /** Is true when the replica sent the pending request only to find which changes to keep before a full copy. */
-  keepsBeforeCopy = false
-
-  /**
-   * Records a request that this replica sends now.
-   *
-   * @param id - The request ID.
-   * @param term - The primary term in which the replica sends it.
-   * @param keepsBeforeCopy - True when the replica asks only to find which changes to keep before a full copy.
-   */
-  start(id: string, term: bigint, keepsBeforeCopy: boolean): void {
-    this.id = id
-    this.term = term
-    this.requestedAt = Date.now()
-    this.keepsBeforeCopy = keepsBeforeCopy
-  }
-
-  /** Forgets the pending request, so that an answer to it no longer matches. */
-  clear(): void {
-    this.id = null
-    this.term = null
-    this.requestedAt = 0
-    this.keepsBeforeCopy = false
-  }
-
-  /**
-   * Returns true when a message carries the ID of the pending request.
-   *
-   * @param requestId - The request ID that the message carries.
-   * @returns True while a request is pending and the IDs are equal.
-   */
-  matches(requestId: string): boolean {
-    return this.id !== null && this.id === requestId
-  }
-
-  /**
-   * Returns true when this replica sent a request in the given term less than `timeoutMs` ago, so that it waits for
-   * that answer before it sends another request.
-   *
-   * @param term - The current primary term.
-   * @param timeoutMs - How long, in milliseconds, the replica waits for an answer.
-   * @returns True while that answer can still arrive.
-   */
-  awaitsAnswerIn(term: bigint, timeoutMs: number): boolean {
-    return this.id !== null && this.term === term && Date.now() - this.requestedAt < timeoutMs
-  }
-}
 
 /**
  * Holds where this node's change log meets the replication group's history. That covers the term whose primary this
@@ -104,6 +46,8 @@ export class TermHistory {
   reconciling = false
   /** Holds the primary term in which this node last kept its unshared changes before a full copy, or null before then. */
   keptBeforeCopyTerm: bigint | null = null
+  /** Holds the request ID of the last full copy that this node completed, or null before it completes one. */
+  copyRequestId: string | null = null
   /** Holds the pending request in which this replica names its newest history transaction. */
   readonly resumeRequest = new ResumeRequest()
   /** Holds the term-start recording in progress, so that concurrent callers wait for one recording. */
@@ -195,6 +139,7 @@ export async function forgetUnheldFirstPrimaryTermStart(
 export async function loadTermHistory(engine: ReplicationEngine): Promise<void> {
   if (!engine.isCoordinatorMode()) return
   const conn = engine.writerConn
+  engine.history.copyRequestId = await selectCopyRequestId(conn)
   if ((await selectSyncMetaRow(conn)) === null && (await selectPrimaryTermStart(conn)) !== null) {
     await engine.log.setSyncMeta('ready')
   }
@@ -348,7 +293,8 @@ async function removeJoinerFromInSyncSet(engine: ReplicationEngine, joinerNodeId
  * Before it tells a joiner to copy, and before it streams a copy for a request that names no transaction, this node
  * removes the joiner from the in-sync set, because the copy replaces the joiner's rows and the group must not promote
  * the joiner while it holds part of a copy. It also forgets what the joiner acknowledged over its current connection,
- * so that it admits the joiner again only on acknowledgements sent after the copy. This node sends no answer to a request that names a transaction before it
+ * so that it admits the joiner again only on acknowledgements sent after the copy, and after a full copy only on
+ * acknowledgements that name that copy's request. This node sends no answer to a request that names a transaction before it
  * has recorded the start of its term, and the joiner then asks again.
  *
  * @param engine - The engine of the primary that received the request.
@@ -368,7 +314,7 @@ export async function answerSyncFromHistory(
   const shared = await selectSharedHistoryPoint(engine, request.historyTail)
   if (shared === null) {
     await removeJoinerFromInSyncSet(engine, fromPeerId)
-    engine.peerTracker.forgetConnectionAcks(fromPeerId)
+    resetJoinerForCopy(engine, fromPeerId, request)
     if (!request.historyTail) return false
     await engine.config.transport.sendSyncComplete(
       fromPeerId,

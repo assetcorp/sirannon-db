@@ -314,7 +314,7 @@ export class PeerTracker {
     // (undocumented)
     getPeerState(nodeId: string): PeerState | undefined;
     // (undocumented)
-    onAckReceived(nodeId: string, ackedSeq: bigint): void;
+    onAckReceived(nodeId: string, ackedSeq: bigint, credited?: boolean): void;
     // (undocumented)
     onBatchApplied(nodeId: string, highestHlc: string): void;
     recheckWaiters(): void;
@@ -389,6 +389,7 @@ export interface RegisterNodeSessionInput {
 export interface ReplicationAck {
     ackedSeq: bigint;
     batchId: string;
+    copyRequestId?: string;
     groupId?: string;
     nodeId: string;
     primaryTerm?: bigint;

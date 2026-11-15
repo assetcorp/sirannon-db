@@ -44,6 +44,8 @@ export interface ReplicationAck {
   groupId?: string
   /** Holds the primary term that the sender reports as current. */
   primaryTerm?: bigint
+  /** Identifies, in coordinator mode, the request of the last full copy that the sender completed. */
+  copyRequestId?: string
 }
 
 /**

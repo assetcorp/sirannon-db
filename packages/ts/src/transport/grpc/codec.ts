@@ -163,6 +163,7 @@ export function toAckPayload(ack: ReplicationAck): AckPayload {
     nodeId: ack.nodeId,
     groupId: ack.groupId ?? '',
     primaryTerm: ack.primaryTerm ?? 0n,
+    copyRequestId: ack.copyRequestId ?? '',
   }
 }
 
@@ -173,6 +174,7 @@ export function fromAckPayload(payload: AckPayload): ReplicationAck {
     nodeId: payload.nodeId,
     groupId: payload.groupId || undefined,
     primaryTerm: payload.primaryTerm === 0n ? undefined : payload.primaryTerm,
+    copyRequestId: payload.copyRequestId || undefined,
   }
 }
 

@@ -10,6 +10,7 @@ import type { GrpcReplicationTransport as GrpcReplicationTransportType } from '.
 import {
   numberPayload,
   optionalArrayPayload,
+  parseAck,
   parseBatch,
   parseForwardRequest,
   parseSyncBatch,
@@ -363,6 +364,11 @@ async function handleMessage(message: RequestMessage): Promise<void> {
     }
     if (command === 'sendRawBatch') {
       await transport.send(stringPayload(payload, 'peerId'), parseBatch(payload.batch))
+      sendResponse(id, true, null)
+      return
+    }
+    if (command === 'sendRawAck') {
+      await transport.sendAck(stringPayload(payload, 'peerId'), parseAck(payload.ack))
       sendResponse(id, true, null)
       return
     }

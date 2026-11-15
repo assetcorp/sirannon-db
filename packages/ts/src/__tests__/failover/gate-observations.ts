@@ -19,7 +19,9 @@ const FailoverStatusSchema = v.object({
   peers: v.array(v.object({ nodeId: v.string(), lastAckedSeq: v.string(), connected: v.boolean() })),
   localSeq: v.string(),
   health: v.object({ state: v.string(), reason: v.string(), canRead: v.boolean(), canWrite: v.boolean() }),
-  syncState: v.optional(v.object({ phase: v.string(), sourcePeerId: v.nullable(v.string()) })),
+  syncState: v.optional(
+    v.object({ phase: v.string(), sourcePeerId: v.nullable(v.string()), totalTables: v.optional(v.number()) }),
+  ),
   coordinator: v.optional(
     v.object({
       currentPrimary: PrimarySchema,

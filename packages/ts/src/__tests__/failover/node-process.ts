@@ -2,7 +2,13 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { QueryOptions } from '../../core/types.js'
-import type { ForwardedTransaction, ReplicationBatch, SyncBatch, SyncRequest } from '../../replication/types.js'
+import type {
+  ForwardedTransaction,
+  ReplicationAck,
+  ReplicationBatch,
+  SyncBatch,
+  SyncRequest,
+} from '../../replication/types.js'
 
 export type FailoverNodeRole = 'primary' | 'replica'
 
@@ -211,6 +217,10 @@ export class FailoverNodeProcess {
 
   async sendRawBatch(peerId: string, batch: ReplicationBatch): Promise<void> {
     await this.request('sendRawBatch', { peerId, batch: serializeJson(batch) }, 20_000)
+  }
+
+  async sendRawAck(peerId: string, ack: ReplicationAck): Promise<void> {
+    await this.request('sendRawAck', { peerId, ack: serializeJson(ack) }, 20_000)
   }
 
   async requestRawSync(peerId: string, request: SyncRequest): Promise<void> {

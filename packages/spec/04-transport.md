@@ -113,6 +113,7 @@ message AckPayload {
   string node_id      = 3;
   string group_id     = 4;
   int64  primary_term = 5;
+  string copy_request_id = 6;
 }
 
 message Hello {
@@ -223,7 +224,7 @@ message ForwardResponse {
 
 ### Value Encoding on the Wire
 
-A `ColumnValue` carries the native SQLite value with no tagged envelope: null, string, 64-bit integer, double, byte array, or boolean. Any integer decodes back as a 64-bit integer. An absent `group_id` or `primary_term` encodes as the empty string or 0 and decodes back to absent. An absent `historyTail` or `historyPoint` leaves its field unset, and an absent `resumed` encodes as false; a receiver that predates these fields ignores them. A `Statement` carries either `named_params` or `positional_params`; when both are populated, the receiver uses `named_params`. An absent write concern encodes as an empty `write_concern_level`, and an absent `timeoutMs` as 0; the receiver rejects any level other than `local`, `majority`, or `all`. A failed `Forward` sets `error` to the message and `error_code` to the error's code, and the forwarding node raises an error with that code, so that its caller receives `STALE_PRIMARY` or `WRITE_CONCERN_ERROR` as the primary raised it.
+A `ColumnValue` carries the native SQLite value with no tagged envelope: null, string, 64-bit integer, double, byte array, or boolean. Any integer decodes back as a 64-bit integer. An absent `group_id` or `primary_term` encodes as the empty string or 0 and decodes back to absent. An absent `historyTail` or `historyPoint` leaves its field unset, an absent `resumed` encodes as false, and an absent `copyRequestId` encodes as the empty string; a receiver that predates these fields ignores them. A `Statement` carries either `named_params` or `positional_params`; when both are populated, the receiver uses `named_params`. An absent write concern encodes as an empty `write_concern_level`, and an absent `timeoutMs` as 0; the receiver rejects any level other than `local`, `majority`, or `all`. A failed `Forward` sets `error` to the message and `error_code` to the error's code, and the forwarding node raises an error with that code, so that its caller receives `STALE_PRIMARY` or `WRITE_CONCERN_ERROR` as the primary raised it.
 
 ### Term Fields
 

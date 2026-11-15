@@ -214,10 +214,10 @@ ReplicationChange {
   ddlStatement?: string
 }
 
-ReplicationAck { batchId: string, groupId?, primaryTerm?, ackedSeq: number, nodeId: string }
+ReplicationAck { batchId: string, groupId?, primaryTerm?, ackedSeq: number, nodeId: string, copyRequestId? }
 ```
 
-A batch holds at most 1000 changes (normative); a sender splits larger sets. A sender sets `afterSeq` to the sequence from which it read the batch, which is the `lastSentSeq` of the peer at that moment; a node that predates the field leaves it out, and a receiver skips the `afterSeq` check for a batch without it. `groupId` and `primaryTerm` are required in coordinator mode and absent or ignored in static mode; a coordinator-mode receiver rejects a batch or acknowledgement whose term does not match its current view with `STALE_PRIMARY`.
+A batch holds at most 1000 changes (normative); a sender splits larger sets. A sender sets `afterSeq` to the sequence from which it read the batch, which is the `lastSentSeq` of the peer at that moment; a node that predates the field leaves it out, and a receiver skips the `afterSeq` check for a batch without it. `groupId` and `primaryTerm` are required in coordinator mode and absent or ignored in static mode; a coordinator-mode receiver rejects a batch or acknowledgement whose term does not match its current view with `STALE_PRIMARY`. In coordinator mode `copyRequestId` names the last full copy that the sender completed, and a node that has completed none, or that predates the field, leaves it out (see [History Reconciliation](09-failover.md#history-reconciliation)).
 
 ### Checksum (Normative)
 

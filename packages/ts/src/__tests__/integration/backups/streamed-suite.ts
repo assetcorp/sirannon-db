@@ -160,7 +160,7 @@ export function describeStreamedCopies(label: string, build: DriverBuilder, must
       async () => {
         const db = await workspace.open('faults', {}, driver)
         const labels = await seedOrders(db, 'order', SEEDED_ORDERS, ORDER_PADDING)
-        const destination = workspace.destination()
+        const destination = workspace.destination('bucket', { blockingFileCalls: true })
         destination.faults.refuseWrite = (name, index) => name === 'refused.db' && index === 1
         destination.faults.holdWrite = (name, index) =>
           name === 'hung.db' && index === 2 ? new Promise<void>(() => {}) : undefined

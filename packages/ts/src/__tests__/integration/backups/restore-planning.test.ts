@@ -258,7 +258,10 @@ describe('checking a stored backup before it is needed', () => {
   })
 
   it('stops a check whose destination hangs once destinationTimeoutMs passes', async () => {
-    const node = await openCycleNode(workspace, 'hung-check', { backups: { destinationTimeoutMs: 150 } })
+    const node = await openCycleNode(workspace, 'hung-check', {
+      destination: workspace.destination('hung-bucket', { blockingFileCalls: true }),
+      backups: { destinationTimeoutMs: 150 },
+    })
     await node.db.captureBackupChanges()
     const base = storedChain(node.destination, storedHeads(node.destination)[0]?.chainId ?? '')[0]
     node.destination.faults.holdRead = name => (name === base?.name ? new Promise<void>(() => {}) : undefined)

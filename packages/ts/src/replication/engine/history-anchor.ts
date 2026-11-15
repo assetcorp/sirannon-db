@@ -13,7 +13,7 @@ import {
 } from '../../core/system-catalog/index.js'
 import type { ReplicationBatch, SyncAck, SyncComplete } from '../types.js'
 import type { ReplicationEngine } from './engine.js'
-import { keepUnsharedChanges, requestHistoryPoint, startFullCopy } from './full-copy-restart.js'
+import { keepUnsharedChanges, rebuildStillRequested, requestHistoryPoint, startFullCopy } from './full-copy-restart.js'
 import { rollBackToHistoryPoint } from './history-rollback.js'
 import { initialSyncState, servesItsData } from './internal-types.js'
 import { reportEngineError } from './report-error.js'
@@ -182,7 +182,8 @@ export function applyInAnchoredTerm<T>(
  * applied the primary's log up to the answer's position, take the answer's term as its reconciled term, and report
  * that position to the primary. Any other answer, a resumed one that the replica cannot apply, and an answer to a
  * request that the replica sent only before a full copy make the replica keep every history change that the primary
- * can lack, stop serving its data, and ask for a full copy.
+ * can lack, stop serving its data, and ask for a full copy. When an operator has cleared the repairing flag that
+ * started the replica's rebuild, the replica keeps its rows and serves them as before.
  *
  * @param engine - The replica's engine.
  * @param complete - The primary's answer.
@@ -216,6 +217,7 @@ export async function handleHistoryAnswer(
     await reportSnapshotPosition(engine, fromPeerId, complete.snapshotSeq)
     return true
   }
+  if (!(await rebuildStillRequested(engine))) return true
   if (complete.primaryTerm !== undefined) {
     await keepUnsharedChanges(
       engine,
@@ -250,7 +252,8 @@ export function handleHistoryRefusal(engine: ReplicationEngine, ack: SyncAck, fr
 /**
  * Handles a copy batch that answers this replica's request to reconcile its history, which a primary from an earlier
  * release sends because it reads no history transaction in the request: the replica keeps every history change that
- * the primary did not write, stops serving its data, and asks for a full copy.
+ * the primary did not write, stops serving its data, and asks for a full copy. When an operator has cleared the
+ * repairing flag that started the replica's rebuild, the replica keeps its rows and serves them as before.
  *
  * @param engine - The replica's engine.
  * @param requestId - The request ID that the batch carries.
@@ -263,6 +266,7 @@ export async function handleHistoryCopyBatch(engine: ReplicationEngine, requestI
   if (!request.matches(requestId)) return false
   const term = request.term
   request.clear()
+  if (!(await rebuildStillRequested(engine))) return true
   if (term !== null) await keepUnsharedChanges(engine, undefined, term)
   await startFullCopy(engine)
   return true
@@ -308,6 +312,7 @@ export async function recordCopiedHistory(
   const history = engine.history
   history.reconciling = false
   history.resumeRequest.clear()
+  engine.rejoin.rebuildingForRepairFlag = false
   const term = complete.primaryTerm
   if (!tracksTermHistory(engine) || term === undefined) return
   const origins = historyOrigins(engine)

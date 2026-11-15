@@ -188,7 +188,7 @@ describe('operators changing a running group', () => {
     await waitForItemsOnDisk(env, NODE_IDS, [row], 15_000)
   })
 
-  it('keeps a copying replica out of the in-sync set after its repair flag is cleared at durability point zero', async () => {
+  it('keeps a copying replica out of the in-sync set from the primary reset after its repair flag is cleared at durability point zero, and completes a majority write made before the reset', async () => {
     const env = environment()
     await startCluster(env)
     expect((await env.etcdOracle.group())?.durabilityPointSeq).toBe(0n)
@@ -208,6 +208,17 @@ describe('operators changing a running group', () => {
       nodeId: NODE_C,
       repairing: false,
     })
+    const writtenBeforeTheReset = itemRow(1, NODE_A, 'before-the-reset')
+    const majorityWrite = writeItemMajority(requireNode(env, NODE_A), writtenBeforeTheReset).then(
+      () => 'acknowledged',
+      (err: unknown) => err,
+    )
+    await waitForStatus(
+      replica,
+      status => status.syncState?.phase === 'ready' || (status.syncState?.totalTables ?? 0) > 0,
+      15_000,
+      'the primary to reset the replica and stream the copy',
+    )
     await holdsThroughout(
       async () => {
         const status = await statusOf(replica)
@@ -217,9 +228,10 @@ describe('operators changing a running group', () => {
       4_000,
       'the unfinished replica to stay outside the in-sync set',
     )
+    expect(await majorityWrite).toBe('acknowledged')
     for (const link of links) await env.toxiproxy.clearToxic(link, 'copy-delay')
     await waitForInSyncSet(env, NODE_IDS, 30_000)
-    expect(await waitForIdenticalFiles(env, NODE_IDS, 15_000)).toEqual([])
+    expect(await waitForIdenticalFiles(env, NODE_IDS, 15_000)).toEqual([writtenBeforeTheReset])
   })
 
   it('promotes nobody while every replica is set aside, and promotes the replica that an operator vouches for with its applied position', async () => {

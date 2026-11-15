@@ -6,7 +6,8 @@ import type { ReplicationEngine } from './engine.js'
  * requests replaces the rows that those acknowledgements describe. For a request that names no history transaction,
  * which this node answers with a full copy, it also records the request, so that from then on only an acknowledgement
  * that names this copy admits the joiner or counts toward a write concern. It then waits for any pending admission
- * to finish, so that the caller can remove the joiner after that admission and before streaming the copy.
+ * to finish, whether the coordinator accepted it or not, so that the caller can remove the joiner after that
+ * admission and before streaming the copy.
  *
  * @param engine - The primary's engine.
  * @param joinerNodeId - The joiner's node ID.
@@ -24,7 +25,7 @@ export async function resetJoinerForCopy(
   const term = engine.coordinatorState?.primaryTerm
   if (request.historyTail || term === undefined) return
   engine.inSync.copyProofs.set(joinerNodeId, { requestId: request.requestId, term })
-  await engine.inSync.pendingAdmissions.get(joinerNodeId)
+  await engine.inSync.pendingAdmissions.get(joinerNodeId)?.catch(() => undefined)
 }
 
 /**

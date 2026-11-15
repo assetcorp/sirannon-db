@@ -28,7 +28,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `DATABASE_OPEN_FAILED` | A database could not be opened. |
 | `READ_ONLY` | A write was attempted on a read-only database. |
 | `QUERY_ERROR` | SQLite failed to prepare or execute a statement. |
-| `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, or used `ATTACH`, `DETACH`, or `PRAGMA writable_schema`. |
+| `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, used `ATTACH`, `DETACH`, or `VACUUM INTO`, or named the `writable_schema`, `temp_store_directory`, or `data_store_directory` pragma. |
 | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed. |
 | `TRANSACTION_CLOSED` | A call reached a `Transaction` after its callback returned or threw. |
 | `WRITER_HELD_BY_CALLBACK` | A call through the database needed the writer while a `transaction` callback held it, on a runtime that cannot tell the callback's own calls apart from other callers. |

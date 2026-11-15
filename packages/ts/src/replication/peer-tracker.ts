@@ -73,7 +73,8 @@ export class PeerTracker {
   /**
    * Discards the acknowledgements that a peer sent over its current connection, so that the peer counts towards a
    * write concern or an admission only after it acknowledges again. Call it when the peer's coordinator session
-   * changes, because a new session can belong to a process with another file.
+   * changes, because a new session can belong to a process with another file, and when the peer starts a full copy,
+   * because the copy replaces the rows that those acknowledgements describe.
    *
    * @param nodeId - The peer's node ID.
    */

@@ -9,6 +9,7 @@ import {
 import type { ReplicationEngine } from './engine.js'
 import { restartWithFullCopy } from './full-copy-restart.js'
 import { ensureAnchoredToCurrentTerm, isAnchoredToCurrentTerm } from './history-anchor.js'
+import { servesItsData } from './internal-types.js'
 import { keepCoordinatorState, removeLocalNodeFromInSyncSet } from './local-membership.js'
 import { reportEngineError } from './report-error.js'
 
@@ -255,10 +256,19 @@ export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<voi
   }
 }
 
+function cancelRebuildForClearedRepairFlag(engine: ReplicationEngine): void {
+  const rejoin = engine.rejoin
+  if (!rejoin.rebuildingForRepairFlag || !servesItsData(engine.syncState.phase)) return
+  rejoin.rebuildingForRepairFlag = false
+  if (engine.history.resumeRequest.keepsBeforeCopy) engine.history.resumeRequest.clear()
+}
+
 /**
  * Starts the full copy that rebuilds a repairing node, whether the node is waiting for its first copy or serves its
  * data. A node that is copying, that is comparing its history as a demoted primary, or that has already finished the
- * copy for the current term starts nothing.
+ * copy for the current term starts nothing. A group state that no longer shows a node that serves its data as
+ * repairing cancels the rebuild that the flag started, so that the node keeps its rows and writes no repairing flag
+ * over the operator's change.
  *
  * @param engine - The node's engine.
  * @param state - The group state that the node read.
@@ -267,7 +277,10 @@ export async function reconcileInSyncSet(engine: ReplicationEngine): Promise<voi
  */
 export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, state: ReplicationGroupState): void {
   const rejoin = engine.rejoin
-  if (!state.repairingNodeIds.includes(engine.nodeId)) rejoin.copiedTerm = null
+  if (!state.repairingNodeIds.includes(engine.nodeId)) {
+    rejoin.copiedTerm = null
+    cancelRebuildForClearedRepairFlag(engine)
+  }
   if (!engine.running || !engine.history.active || rejoin.syncStarting) return
   if (!requiresCoordinatorRejoinSync(engine, state) || rejoin.copiedTerm === state.primaryTerm) return
   if (engine.syncState.phase === 'syncing') return
@@ -275,7 +288,9 @@ export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, sta
   if (!sourceNodeId || !engine.config.transport.peers().has(sourceNodeId)) return
 
   rejoin.syncStarting = true
-  const rebuild = engine.syncState.phase === 'pending' ? engine.syncJoiner.initiateSync() : restartWithFullCopy(engine)
+  const servingItsData = servesItsData(engine.syncState.phase)
+  if (servingItsData) rejoin.rebuildingForRepairFlag = true
+  const rebuild = servingItsData ? restartWithFullCopy(engine) : engine.syncJoiner.initiateSync()
   rebuild
     .catch((err: unknown) => reportEngineError(engine, err, 'coordinator-rejoin-sync', true))
     .finally(() => {

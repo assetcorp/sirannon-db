@@ -347,7 +347,8 @@ async function removeJoinerFromInSyncSet(engine: ReplicationEngine, joinerNodeId
  *
  * Before it tells a joiner to copy, and before it streams a copy for a request that names no transaction, this node
  * removes the joiner from the in-sync set, because the copy replaces the joiner's rows and the group must not promote
- * the joiner while it holds part of a copy. This node sends no answer to a request that names a transaction before it
+ * the joiner while it holds part of a copy. It also forgets what the joiner acknowledged over its current connection,
+ * so that it admits the joiner again only on acknowledgements sent after the copy. This node sends no answer to a request that names a transaction before it
  * has recorded the start of its term, and the joiner then asks again.
  *
  * @param engine - The engine of the primary that received the request.
@@ -367,6 +368,7 @@ export async function answerSyncFromHistory(
   const shared = await selectSharedHistoryPoint(engine, request.historyTail)
   if (shared === null) {
     await removeJoinerFromInSyncSet(engine, fromPeerId)
+    engine.peerTracker.forgetConnectionAcks(fromPeerId)
     if (!request.historyTail) return false
     await engine.config.transport.sendSyncComplete(
       fromPeerId,

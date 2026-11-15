@@ -6,11 +6,47 @@ import {
   selectHistoryBase,
   selectNewestHistoryChange,
 } from '../../core/system-catalog/index.js'
+import type { ReplicationGroupState } from '../coordinator/types.js'
 import type { SyncHistoryPoint } from '../types.js'
+import { refreshCoordinatorState } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { selectSharedPointHlc } from './history-rollback.js'
 import { initialSyncState, servesItsData } from './internal-types.js'
+import { reportEngineError } from './report-error.js'
 import { historyOrigins } from './term-history.js'
+
+function asksThisNodeToRebuild(engine: ReplicationEngine, state: ReplicationGroupState | null): boolean {
+  if (!state || state.currentPrimary?.nodeId === engine.nodeId) return false
+  return state.repairingNodeIds.includes(engine.nodeId) && !state.faultedNodeIds.includes(engine.nodeId)
+}
+
+async function currentGroupState(engine: ReplicationEngine): Promise<ReplicationGroupState | null> {
+  try {
+    return await refreshCoordinatorState(engine)
+  } catch (err: unknown) {
+    reportEngineError(engine, err, 'repair-rebuild-confirmation', true)
+    return engine.coordinatorState
+  }
+}
+
+/**
+ * Returns whether a node that serves its data may start the full copy of a rebuild, reading the group's state again
+ * first when the group's repairing flag started that rebuild. An operator who clears the flag before the copy starts
+ * cancels the rebuild, so the node keeps its rows and serves them as before. When the coordinator cannot answer, the
+ * node decides from the last group state that it read.
+ *
+ * @param engine - The node's engine.
+ * @returns True for a copy that the node's own history requires, and for a rebuild whose flag the group still holds.
+ *
+ * @internal
+ */
+export async function rebuildStillRequested(engine: ReplicationEngine): Promise<boolean> {
+  const rejoin = engine.rejoin
+  if (!rejoin.rebuildingForRepairFlag) return true
+  if (asksThisNodeToRebuild(engine, await currentGroupState(engine))) return true
+  rejoin.rebuildingForRepairFlag = false
+  return false
+}
 
 async function selectHistoryTail(engine: ReplicationEngine): Promise<SyncHistoryPoint | null> {
   const conn = engine.writerConn
@@ -48,6 +84,7 @@ export async function requestHistoryPoint(
   if (!history.resumeRequest.matches(requestId)) return
   if (tail === null) {
     history.resumeRequest.clear()
+    if (!(await rebuildStillRequested(engine))) return
     history.keptBeforeCopyTerm = term
     await startFullCopy(engine)
     return
@@ -140,7 +177,7 @@ export async function restartWithFullCopy(engine: ReplicationEngine): Promise<vo
     primaryId === engine.nodeId ||
     history.keptBeforeCopyTerm === state.primaryTerm
   ) {
-    await startFullCopy(engine)
+    if (await rebuildStillRequested(engine)) await startFullCopy(engine)
     return
   }
   if (history.resumeRequest.awaitsAnswerIn(state.primaryTerm, engine.syncAckTimeoutMs)) return

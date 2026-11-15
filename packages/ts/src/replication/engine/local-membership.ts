@@ -157,11 +157,13 @@ export async function applyCoordinatorRestartRules(
 
 /**
  * Marks this replica repairing before it asks for a full copy, so that the group never promotes the replica while the
- * copy replaces its rows and admits it again only once the copy has finished in the current term.
+ * copy replaces its rows and admits it again only once the copy has finished in the current term. A copy that rebuilds
+ * the replica because the group's repairing flag asked for it writes nothing, because that flag belongs to the operator
+ * who set it, and a write here would undo an operator who cleared it.
  *
  * @param engine - The replica's engine.
  * @returns A promise that settles once the coordinator shows the replica repairing, or at once outside coordinator
- * mode, on the current primary, and on a faulted node.
+ * mode, on the current primary, on a faulted node, and during a rebuild that the group's repairing flag started.
  * @throws TopologyError when the group's state shows that this node is not a member.
  * @throws CoordinatorError when the coordinator holds no state for the group.
  *
@@ -170,7 +172,7 @@ export async function applyCoordinatorRestartRules(
 export async function markRepairingBeforeCopy(engine: ReplicationEngine): Promise<void> {
   const config = engine.config.coordinator
   const known = engine.coordinatorState
-  if (!config || !known) return
+  if (!config || !known || engine.rejoin.rebuildingForRepairFlag) return
   if (known.currentPrimary?.nodeId === engine.nodeId || known.faultedNodeIds.includes(engine.nodeId)) return
   if (!isGroupMember(known, engine.nodeId)) {
     throw new TopologyError(`Node '${engine.nodeId}' is not a member of replication group '${config.groupId}'`)

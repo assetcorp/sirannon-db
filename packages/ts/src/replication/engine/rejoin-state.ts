@@ -7,6 +7,12 @@
 export class RejoinState {
   /** Is true while this node starts the full copy that rebuilds it, so that it starts one copy at a time. */
   syncStarting = false
+  /**
+   * Is true from the moment that this node, while it serves its data, starts the rebuild that the group's repairing
+   * flag asks for, until the copy finishes or an operator clears the flag before the copy starts. The operator's flag
+   * covers that rebuild, so the node writes no repairing flag of its own over an operator's later change to it.
+   */
+  rebuildingForRepairFlag = false
   /** Holds the primary term in which this node finished the full copy that rejoins it, or null before it finishes one. */
   copiedTerm: bigint | null = null
   /** Is true while this node asks the coordinator to admit it after that copy, so that it sends one request at a time. */

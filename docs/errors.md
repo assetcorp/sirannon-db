@@ -32,7 +32,7 @@ The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILE
 | - | `DATABASE_OPEN_FAILED` | Sirannon cannot open a database |
 | `ReadOnlyError` | `READ_ONLY` | A caller writes to a read-only database or calls `live` on one |
 | `QueryError` | `QUERY_ERROR` | SQLite fails to prepare or execute a statement |
-| `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, or uses `ATTACH`, `DETACH`, or `PRAGMA writable_schema` |
+| `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, uses `ATTACH`, `DETACH`, or `VACUUM INTO`, or names the `writable_schema`, `temp_store_directory`, or `data_store_directory` pragma |
 | `TransactionError` | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed, such as on a deferred foreign key |
 | - | `TRANSACTION_CLOSED` | A caller uses the `Transaction` handle from a `transaction` callback after that callback returns or throws |
 | - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads, writes, migrates, backs up, or calls `watch` or `live` through the database while a `transaction` callback holds the writer; make the callback's reads and writes through its `Transaction` handle |

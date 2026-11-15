@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   countSqlite,
@@ -25,6 +26,15 @@ function schemaRows(): Array<{ type: string; name: string; sql: string | null }>
   return readSqlite(path, 'SELECT type, name, sql FROM sqlite_master ORDER BY name')
 }
 
+function processTempStoreDirectory(): unknown {
+  const raw = new BetterSqlite3(':memory:')
+  try {
+    return raw.prepare('PRAGMA temp_store_directory').all()
+  } finally {
+    raw.close()
+  }
+}
+
 function bodyFor(route: string, sql: string): Record<string, unknown> {
   if (route === 'transaction')
     return { statements: [{ sql: INSERT_NOTE, params: ['first in the transaction'] }, { sql }] }
@@ -45,10 +55,21 @@ beforeEach(async () => {
 
 afterEach(releaseServedRegistries)
 
-describe("statements that reach Sirannon's own tables or the SQLite catalogue", () => {
-  it('refuses each one with FORBIDDEN_SQL on every route of both transports and leaves the file untouched', async () => {
+describe("statements that reach Sirannon's own tables, the SQLite catalogue, or a file other than the database", () => {
+  it('refuses each one with FORBIDDEN_SQL on every route of both transports and leaves every file untouched', async () => {
     const attached = join(dir, 'smuggled.db')
+    const copy = join(dir, 'copy.db')
     const refused = [
+      `VACUUM INTO '${copy}'`,
+      `vacuum main into '${copy}'`,
+      `VACUUM 'main' /* then */ INTO '${copy}'`,
+      `SELECT 1; VACUUM INTO '${copy}'`,
+      'PRAGMA temp_store_directory',
+      `PRAGMA temp_store_directory = '${dir}'`,
+      `PRAGMA 'temp_store_directory' = '${dir}'`,
+      `PRAGMA main."temp_store_directory" = '${dir}'`,
+      `PRAGMA data_store_directory = '${dir}'`,
+      "PRAGMA 'writable_schema' = 1",
       'SELECT * FROM _sirannon_changes',
       'SELECT * FROM _SIRANNON_CHANGES',
       'SELECT * FROM "_sirannon_changes"',
@@ -92,6 +113,8 @@ describe("statements that reach Sirannon's own tables or the SQLite catalogue", 
     }
 
     expect(existsSync(attached)).toBe(false)
+    expect(existsSync(copy)).toBe(false)
+    expect(processTempStoreDirectory()).toEqual([])
     expect(countSqlite(path, '_sirannon_changes')).toBe(changesBefore)
     expect(schemaRows()).toEqual(schemaBefore)
     expect(readSqlite(path, 'SELECT id, body FROM notes ORDER BY id')).toEqual(notesBefore)

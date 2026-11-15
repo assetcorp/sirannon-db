@@ -27,7 +27,12 @@ const SIRANNON_MESSAGE =
 const SQLITE_WRITE_MESSAGE =
   "The SQLite schema catalogue is read-only: statements that modify a 'sqlite_' identifier are not permitted"
 const ATTACH_MESSAGE = 'ATTACH and DETACH statements are not permitted'
-const WRITABLE_SCHEMA_MESSAGE = 'PRAGMA writable_schema is not permitted'
+const VACUUM_INTO_MESSAGE = 'VACUUM INTO is not permitted'
+const FORBIDDEN_PRAGMA_MESSAGES = new Map([
+  ['writable_schema', 'PRAGMA writable_schema is not permitted'],
+  ['temp_store_directory', 'PRAGMA temp_store_directory is not permitted'],
+  ['data_store_directory', 'PRAGMA data_store_directory is not permitted'],
+])
 
 const WRITE_VERBS = new Set(['insert', 'update', 'delete', 'replace', 'create', 'alter', 'drop', 'vacuum', 'reindex'])
 const STATEMENT_VERBS_AFTER_WITH = new Set(['select', 'insert', 'update', 'delete', 'replace'])
@@ -45,6 +50,18 @@ export function isReservedIdentifier(name: string): boolean {
   return reservedKind(name) !== null
 }
 
+/**
+ * Returns the reason that the query API refuses a statement, or `null` when the query API accepts it.
+ *
+ * The query API refuses a statement that names a `_sirannon` identifier, modifies a `sqlite_` identifier, or uses
+ * `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA writable_schema`, `PRAGMA temp_store_directory`, or
+ * `PRAGMA data_store_directory`. A pragma's name counts whether the statement writes it bare, quoted as an identifier,
+ * or as a string literal.
+ *
+ * @param sql - The statement text, which can hold several statements separated by semicolons.
+ * @returns The reason for the first refused statement, or `null` when the guard refuses none of them.
+ * @internal
+ */
 export function reservedSqlError(sql: string): string | null {
   const lower = sql.toLowerCase()
   if (
@@ -52,13 +69,23 @@ export function reservedSqlError(sql: string): string | null {
     !lower.includes('sqlite_') &&
     !lower.includes('attach') &&
     !lower.includes('detach') &&
-    !lower.includes('writable_schema')
+    !lower.includes('writable_schema') &&
+    !lower.includes('vacuum') &&
+    !lower.includes('_store_directory')
   ) {
     return null
   }
   return scan(sql)
 }
 
+/**
+ * Returns normally when the query API accepts a statement, and throws when {@link reservedSqlError} gives a reason to
+ * refuse it.
+ *
+ * @param sql - The statement text, which can hold several statements separated by semicolons.
+ * @throws {@link ForbiddenSqlError} with the code `FORBIDDEN_SQL` when the query API refuses the statement.
+ * @internal
+ */
 export function assertSqlAllowed(sql: string): void {
   const reason = reservedSqlError(sql)
   if (reason) {
@@ -90,8 +117,14 @@ function freshStatement(): StatementState {
   return { verb: '', depth: 0, namesCatalogue: false }
 }
 
+function pragmaError(name: string, state: StatementState): string | null {
+  if (state.verb !== 'pragma') return null
+  return FORBIDDEN_PRAGMA_MESSAGES.get(name.toLowerCase()) ?? null
+}
+
 function identifierError(name: string, state: StatementState): string | null {
-  if (state.verb === 'pragma' && name.toLowerCase() === 'writable_schema') return WRITABLE_SCHEMA_MESSAGE
+  const forbiddenPragma = pragmaError(name, state)
+  if (forbiddenPragma) return forbiddenPragma
   const kind = reservedKind(name)
   if (kind === 'sqlite') state.namesCatalogue = true
   return referenceError(kind, state.verb)
@@ -104,6 +137,7 @@ function wordError(word: string, statementStart: boolean, state: StatementState)
     if (lowerWord === 'attach' || lowerWord === 'detach') return ATTACH_MESSAGE
     return identifierError(word, state)
   }
+  if (state.verb === 'vacuum' && lowerWord === 'into') return VACUUM_INTO_MESSAGE
   if (state.verb === 'with' && state.depth === 0 && STATEMENT_VERBS_AFTER_WITH.has(lowerWord)) {
     state.verb = lowerWord
     return state.namesCatalogue && WRITE_VERBS.has(lowerWord) ? SQLITE_WRITE_MESSAGE : null
@@ -139,7 +173,14 @@ function scan(sql: string): string | null {
     }
 
     if (c === "'") {
-      i = skipQuoted(sql, i, "'")
+      if (state.verb === 'pragma') {
+        const literal = readDelimited(sql, i, "'")
+        const error = pragmaError(literal.value, state)
+        if (error) return error
+        i = literal.next
+      } else {
+        i = skipQuoted(sql, i, "'")
+      }
       statementStart = false
       continue
     }

@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs'
+import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
 import { columnRaw, createWorkspace, readRaw, type Workspace, WRITER_PLACEMENTS } from './harness.js'
@@ -44,6 +45,15 @@ afterEach(async () => {
   await workspace.dispose()
 })
 
+function processTempStoreDirectory(): unknown {
+  const raw = new BetterSqlite3(':memory:')
+  try {
+    return raw.prepare('PRAGMA temp_store_directory').all()
+  } finally {
+    raw.close()
+  }
+}
+
 function schemaSnapshot(path: string): unknown {
   return {
     schema: readRaw(path, 'SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name'),
@@ -86,9 +96,18 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     expect(schemaSnapshot(path)).toEqual(before)
   })
 
-  it('refuses a statement that modifies the sqlite_ catalogue, ATTACH, DETACH, and PRAGMA writable_schema in every spelling', async () => {
+  it('refuses a statement that modifies the sqlite_ catalogue, ATTACH, DETACH, VACUUM INTO, and the writable_schema, temp_store_directory, and data_store_directory pragmas in every spelling', async () => {
     const { db, path } = await openShop()
     const attached = workspace.path('attached.db')
+    const copies = [
+      'copy.db',
+      'main-copy.db',
+      'quoted-copy.db',
+      'string-copy.db',
+      'joined-copy.db',
+      'temp-copy.db',
+    ].map(name => workspace.path(name))
+    const directory = workspace.path('')
     const before = schemaSnapshot(path)
     const refused = [
       "INSERT INTO sqlite_sequence (name, seq) VALUES ('notes', 99)",
@@ -112,6 +131,24 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
       'PRAGMA "writable_schema" = 1',
       'PRAGMA [writable_schema] = 1',
       'PRAGMA main.`writable_schema` = 1',
+      "PRAGMA 'writable_schema' = 1",
+      "PRAGMA main.'WRITABLE_SCHEMA' = 1",
+      `VACUUM INTO '${copies[0]}'`,
+      `vacuum main into '${copies[1]}'`,
+      `VACUUM "main" /* then */ INTO '${copies[2]}'`,
+      `VACUUM 'main' INTO '${copies[3]}'`,
+      `SELECT 1; VACUUM INTO '${copies[4].slice(0, -3)}' || '.db'`,
+      `VACUUM temp INTO '${copies[5]}'`,
+      'PRAGMA temp_store_directory',
+      `PRAGMA temp_store_directory = '${directory}'`,
+      `pragma TEMP_STORE_DIRECTORY('${directory}')`,
+      `PRAGMA main.temp_store_directory = '${directory}'`,
+      `PRAGMA "temp_store_directory" = '${directory}'`,
+      `PRAGMA [temp_store_directory] = '${directory}'`,
+      `PRAGMA 'temp_store_directory' = '${directory}'`,
+      `PRAGMA 'main'.'temp_store_directory' = '${directory}'`,
+      `PRAGMA data_store_directory = '${directory}'`,
+      `PRAGMA 'data_store_directory' = '${directory}'`,
     ]
 
     for (const sql of refused) {
@@ -120,6 +157,8 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     }
 
     expect(existsSync(attached)).toBe(false)
+    expect(copies.filter(copy => existsSync(copy))).toEqual([])
+    expect(processTempStoreDirectory()).toEqual([])
     expect(schemaSnapshot(path)).toEqual(before)
   })
 
@@ -155,6 +194,8 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
       "it's sqlite_master and _sirannon_meta",
       'ATTACH DATABASE x AS y',
       'PRAGMA writable_schema = 1',
+      "VACUUM INTO 'copy.db'",
+      'PRAGMA temp_store_directory = /tmp',
     ]
 
     for (const body of bodies) {
@@ -178,5 +219,10 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     ])
     expect(await db.query('PRAGMA table_info(orders_sirannon_archive)')).toHaveLength(1)
     expect(columnRaw(path, 'SELECT body FROM notes ORDER BY id')).toEqual([...bodies, 'parameter'])
+    await db.execute('DELETE FROM notes')
+    await db.execute('VACUUM')
+    await db.execute('VACUUM main')
+    expect(columnRaw(path, 'SELECT count(*) FROM notes')).toEqual([0n])
+    expect(await db.query("PRAGMA journal_mode = 'wal'")).toEqual([{ journal_mode: 'wal' }])
   })
 })

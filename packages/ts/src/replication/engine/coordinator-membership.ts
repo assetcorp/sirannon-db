@@ -211,9 +211,8 @@ export async function handleCoordinatorAckProgress(
   if (!isGroupMember(state, nodeId)) return
   if (ackedSeq < admissionSeq(engine, state)) return
 
-  pendingAdmissions.add(nodeId)
-  try {
-    const admitted = await config.coordinator.admitNodeToInSyncSet({
+  const admission: Promise<void> = config.coordinator
+    .admitNodeToInSyncSet({
       clusterId: config.clusterId,
       groupId: config.groupId,
       nodeId,
@@ -221,11 +220,15 @@ export async function handleCoordinatorAckProgress(
       appliedSeq: ackedSeq,
       expectedPrimaryTerm: state.primaryTerm,
     })
-    if (admitted) applyCoordinatorState(engine, admitted)
-  } finally {
-    pendingAdmissions.delete(nodeId)
-    engine.peerTracker.recheckWaiters()
-  }
+    .then(admitted => {
+      if (admitted) applyCoordinatorState(engine, admitted)
+    })
+    .finally(() => {
+      if (pendingAdmissions.get(nodeId) === admission) pendingAdmissions.delete(nodeId)
+      engine.peerTracker.recheckWaiters()
+    })
+  pendingAdmissions.set(nodeId, admission)
+  await admission
 }
 
 /**

@@ -1,7 +1,9 @@
-import type { UpdateInSyncSetInput } from '../../replication/coordinator/types.js'
+import type { AdmitNodeToInSyncSetInput, UpdateInSyncSetInput } from '../../replication/coordinator/types.js'
 
 export interface CoordinatorCallHoldFilter {
   removesNodeId?: string
+  admissions?: boolean
+  admitsNodeId?: string
 }
 
 export class CoordinatorCallHold {
@@ -28,10 +30,13 @@ export class CoordinatorCallHold {
     return this.heldCount
   }
 
-  async pass(input: UpdateInSyncSetInput): Promise<void> {
+  async pass(input: UpdateInSyncSetInput | AdmitNodeToInSyncSetInput): Promise<void> {
     const filter = this.filter
     if (filter === null) return
-    if (filter.removesNodeId !== undefined && input.inSyncNodeIds.includes(filter.removesNodeId)) return
+    const admission = 'nodeId' in input
+    if (admission !== (filter.admissions === true)) return
+    if (admission && filter.admitsNodeId !== undefined && input.nodeId !== filter.admitsNodeId) return
+    if (!admission && filter.removesNodeId !== undefined && input.inSyncNodeIds.includes(filter.removesNodeId)) return
     this.heldCount += 1
     await this.gate
   }

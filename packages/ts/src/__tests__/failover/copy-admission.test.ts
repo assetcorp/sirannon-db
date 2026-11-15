@@ -26,6 +26,7 @@ describe('admissions in flight when a replica requests a full copy', () => {
       inSyncNodeIds: [NODE_A, NODE_B],
     })
     await waitForCondition(async () => (await primary.heldInSyncUpdates()) > 0, 10_000)
+    const receivedRequests = await primary.copyTraffic('received', 'request', NODE_C)
     await env.coordinator.updateNodeMaintenance({
       clusterId: CLUSTER_ID,
       groupId: GROUP_ID,
@@ -37,6 +38,10 @@ describe('admissions in flight when a replica requests a full copy', () => {
       status => status.syncState?.phase === 'syncing',
       10_000,
       'a requested copy',
+    )
+    await waitForCondition(
+      async () => (await primary.copyTraffic('received', 'request', NODE_C)) > receivedRequests,
+      10_000,
     )
     await holdsThroughout(
       async () => (await primary.copyTraffic('count')) === 0,

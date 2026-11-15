@@ -88,7 +88,7 @@ export async function requestHistoryPoint(
   if (!history.resumeRequest.matches(requestId)) return
   if (tail === null) {
     history.resumeRequest.clear()
-    if (!(await rebuildStillRequested(engine))) return
+    if (!(await rebuildStillRequested(engine)) || repairGeneration !== engine.rejoin.repairGeneration) return
     history.keptBeforeCopyTerm = term
     await startFullCopy(engine, repairGeneration)
     return
@@ -114,6 +114,8 @@ export async function requestHistoryPoint(
  * @param engine - The node's engine.
  * @param point - The last transaction that the node shares with the primary, or undefined when the primary named none.
  * @param term - The primary term of the full copy that follows.
+ * @param repairGeneration - The repair request under which the caller prepares the copy. The node keeps nothing once
+ * an operator has cancelled that request.
  * @returns A promise that settles once the node has kept the changes.
  *
  * @internal
@@ -122,13 +124,15 @@ export async function keepUnsharedChanges(
   engine: ReplicationEngine,
   point: SyncHistoryPoint | undefined,
   term: bigint,
+  repairGeneration = engine.rejoin.repairGeneration,
 ): Promise<void> {
-  const repairGeneration = engine.rejoin.repairGeneration
   const primaryId = engine.coordinatorState?.currentPrimary?.nodeId
   if (!engine.isCoordinatorMode() || !servesItsData(engine.syncState.phase)) return
+  if (repairGeneration !== engine.rejoin.repairGeneration) return
   const origins = historyOrigins(engine)
   await engine.history.exclusive(() =>
     engine.writerConn.transaction(async tx => {
+      if (repairGeneration !== engine.rejoin.repairGeneration) return
       const nowSeconds = Date.now() / 1000
       const cut = point ? await selectSharedPointHlc(tx, point) : null
       if (cut !== null) {

@@ -2,7 +2,7 @@ import { HLC } from '../../core/sync/hlc.js'
 import { setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { BatchValidationError, ReplicationError } from '../errors.js'
 import type { NodeInfo, ReplicationBatch } from '../types.js'
-import { assertInboundCoordinatorMessage, resolverFor } from './coordinator-authority.js'
+import { assertInboundCoordinatorMessage, assertNoRestartProofPending, resolverFor } from './coordinator-authority.js'
 import { handleCoordinatorAckProgress } from './coordinator-membership.js'
 import { forgetPeerRefusal } from './encryption-refusal.js'
 import type { ReplicationEngine } from './engine.js'
@@ -14,6 +14,8 @@ import {
 } from './history-anchor.js'
 import { servesItsData } from './internal-types.js'
 import { isPositionReport, positionReport } from './position-report.js'
+import { reportEngineError } from './report-error.js'
+import { noteRestartReport } from './restart-proof.js'
 import { refreshTriggersAfterDdl } from './trigger-refresh.js'
 
 function clockLeadMs(remoteHlc: string): number {
@@ -28,7 +30,7 @@ function replicatesFrom(engine: ReplicationEngine, peer: NodeInfo): boolean {
 }
 
 async function reportAppliedPosition(engine: ReplicationEngine, peer: NodeInfo, appliedSeq: bigint): Promise<void> {
-  if (appliedSeq === 0n || !replicatesFrom(engine, peer)) return
+  if ((appliedSeq === 0n && !engine.isCoordinatorMode()) || !replicatesFrom(engine, peer)) return
   if (!servesItsData(engine.syncState.phase) || !isAnchoredToCurrentTerm(engine)) return
   if (!servesItsData((await engine.log.getSyncState()).phase)) return
   await engine.config.transport.sendAck(peer.id, positionReport(engine, appliedSeq))
@@ -141,6 +143,12 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
 
   engine.config.transport.onAckReceived((ack, fromPeerId) => {
     if (!engine.running) return
+    if (engine.inSync.restartProof && isPositionReport(ack) && ack.nodeId === fromPeerId) {
+      assertInboundCoordinatorMessage(engine, ack, fromPeerId, 'ack')
+        .then(() => noteRestartReport(engine, fromPeerId, ack.ackedSeq))
+        .catch((err: unknown) => reportEngineError(engine, err, 'restart-proof-report', true))
+      return
+    }
     if (engine.syncState.phase !== 'ready' && engine.syncState.phase !== 'catching-up') return
     if (!engine.isCoordinatorMode()) {
       if (ack.nodeId !== fromPeerId) {
@@ -178,6 +186,7 @@ export function wireTransportHandlers(engine: ReplicationEngine): void {
         throw new ReplicationError('Node is not ready to handle forwarded requests')
       }
       await assertInboundCoordinatorMessage(engine, request, fromPeerId, 'forward')
+      assertNoRestartProofPending(engine)
       const knownPeers = engine.config.transport.peers()
       if (!knownPeers.has(fromPeerId)) {
         throw new ReplicationError(`Rejected forward from unknown peer: ${fromPeerId}`)

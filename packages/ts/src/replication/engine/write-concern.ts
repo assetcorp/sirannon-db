@@ -1,8 +1,8 @@
-import { arraysEqual, sameNodeIdSet } from '../coordinator/group-rules.js'
+import { IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL, majorityOf } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
-import { CoordinatorError, StalePrimaryError, WriteConcernError } from '../errors.js'
+import { CoordinatorError, StalePrimaryError } from '../errors.js'
 import { DEFAULT_WRITE_CONCERN_TIMEOUT_MS } from './constants.js'
-import { applyCoordinatorState, errorDetails, refreshCoordinatorState } from './coordinator-authority.js'
+import { errorDetails, hasCurrentPrimaryAuthorityFor, refreshCoordinatorState } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { assertPrimaryInTerm, updateInSyncSetFromCurrent } from './in-sync-updates.js'
 import { ensurePrimaryTermStart } from './term-history.js'
@@ -10,85 +10,85 @@ import { ensurePrimaryTermStart } from './term-history.js'
 const WRITE_PROGRESS_PURPOSE = 'the progress of a write that it acknowledges'
 
 /**
- * Returns the group state after a write meets its write concern. This node keeps in the in-sync set only the voters
- * that acknowledged the write over their current connections and raises the durability point to the write's position.
- * It then admits every acknowledging voter outside the set, except a repairing or faulted voter, which rejoins through
- * its own copy. Each update takes effect only while this node is still the primary in the term in which it accepted
- * the write.
+ * Returns the nodes whose copy every acknowledged write needs: this node, every node in the in-sync set, and every
+ * node whose admission this node has requested and the coordinator has not answered, which includes a pending voter.
  *
- * @param engine - The engine of the primary that accepted the write.
- * @param seq - The write's position in this node's change log.
- * @param state - The group state under which this node accepted the write.
- * @returns The group state after every update, whose voters can differ from the voters in `state`.
- * @throws StalePrimaryError when the term or primary duty passes to another node before every update takes effect.
+ * @param engine - The primary's engine.
+ * @param state - The group state that names the in-sync set.
+ * @returns Those nodes, with this node first.
  *
  * @internal
  */
-export async function updateCoordinatorProgressAfterWrite(
-  engine: ReplicationEngine,
-  seq: bigint,
-  state: ReplicationGroupState,
-): Promise<ReplicationGroupState> {
-  const config = engine.config.coordinator
-  if (!config) return state
-  const term = state.primaryTerm
-  let nextState = await updateInSyncSetFromCurrent(engine, {
-    purpose: WRITE_PROGRESS_PURPOSE,
-    known: engine.coordinatorState ?? state,
-    primaryTerm: term,
-    change: base => {
-      const acked = engine.peerTracker.ackedConfiguredNodeIds(seq, engine.nodeId, base.votingDataBearingNodeIds)
-      const retained = base.inSyncNodeIds.filter(nodeId => acked.includes(nodeId))
-      if (arraysEqual(retained, base.inSyncNodeIds) && base.durabilityPointSeq >= seq) return null
-      return { inSyncNodeIds: retained, durabilityPointSeq: seq }
-    },
-  })
+export function inSyncCopyHolderIds(engine: ReplicationEngine, state: ReplicationGroupState): string[] {
+  return [...new Set([engine.nodeId, ...state.inSyncNodeIds, ...engine.inSync.pendingAdmissions])]
+}
 
-  const ackedNodeIds = engine.peerTracker.ackedConfiguredNodeIds(seq, engine.nodeId, nextState.votingDataBearingNodeIds)
-  for (const nodeId of ackedNodeIds) {
-    if (nodeId === engine.nodeId || nextState.inSyncNodeIds.includes(nodeId)) continue
-    if (nextState.repairingNodeIds.includes(nodeId) || nextState.faultedNodeIds.includes(nodeId)) continue
-    const admitted = await config.coordinator.admitNodeToInSyncSet({
-      clusterId: config.clusterId,
-      groupId: config.groupId,
-      nodeId,
-      sourceNodeId: engine.nodeId,
-      appliedSeq: seq,
-      expectedPrimaryTerm: term,
-    })
-    if (!admitted) {
-      throw new CoordinatorError(
-        'The coordinator holds no state for this replication group, so this node cannot admit the voters that acknowledged a write',
-        errorDetails(engine, nextState),
-      )
-    }
-    applyCoordinatorState(engine, admitted)
-    assertPrimaryInTerm(engine, admitted, term, WRITE_PROGRESS_PURPOSE)
-    nextState = admitted
-  }
-  return nextState
+function holdsWrite(engine: ReplicationEngine, nodeId: string, seq: bigint): boolean {
+  if (nodeId === engine.nodeId) return true
+  const acked = engine.peerTracker.connectionAckedSeq(nodeId)
+  return acked !== undefined && acked >= seq
+}
+
+function inSyncVotersHold(engine: ReplicationEngine, seq: bigint, state: ReplicationGroupState): boolean {
+  const holders = inSyncCopyHolderIds(engine, state)
+  const voters = state.votingDataBearingNodeIds
+  const recordedVoters = new Set([engine.nodeId, ...state.inSyncNodeIds].filter(nodeId => voters.includes(nodeId)))
+  if (recordedVoters.size < majorityOf(voters.length)) return false
+  return holders.every(nodeId => holdsWrite(engine, nodeId, seq))
+}
+
+function eligibleVotersHold(engine: ReplicationEngine, seq: bigint, state: ReplicationGroupState): boolean {
+  const eligible = state.votingDataBearingNodeIds.filter(nodeId => !state.drainingNodeIds.includes(nodeId))
+  return [...eligible, ...engine.inSync.pendingAdmissions].every(nodeId => holdsWrite(engine, nodeId, seq))
+}
+
+function noteAcknowledged(engine: ReplicationEngine, seq: bigint): void {
+  if (seq > engine.inSync.acknowledgedSeq) engine.inSync.acknowledgedSeq = seq
+}
+
+function stillPrimaryIn(engine: ReplicationEngine, term: bigint): ReplicationGroupState | null {
+  const state = engine.coordinatorState
+  if (!state || state.primaryTerm !== term || !hasCurrentPrimaryAuthorityFor(engine, state)) return null
+  return state
 }
 
 async function waitForVoters(
   engine: ReplicationEngine,
   seq: bigint,
   level: 'majority' | 'all',
-  state: ReplicationGroupState,
-  timeoutMs: number,
+  term: bigint,
+  deadline: number,
 ): Promise<void> {
-  if (level === 'majority') {
-    await engine.peerTracker.waitForConfiguredMajority(seq, engine.nodeId, state.votingDataBearingNodeIds, timeoutMs)
-    return
-  }
-  const eligibleVoters = state.votingDataBearingNodeIds.filter(nodeId => !state.drainingNodeIds.includes(nodeId))
-  await engine.peerTracker.waitForConfiguredAll(seq, engine.nodeId, eligibleVoters, timeoutMs)
+  const holdsAt = level === 'majority' ? inSyncVotersHold : eligibleVotersHold
+  const description = level === 'majority' ? 'every in-sync voter' : 'every voter'
+  await engine.peerTracker.waitUntil(
+    () => {
+      const state = stillPrimaryIn(engine, term)
+      if (!state) return true
+      if (!holdsAt(engine, seq, state)) return false
+      noteAcknowledged(engine, seq)
+      return true
+    },
+    Math.max(0, deadline - Date.now()),
+    `Timed out waiting for ${description} of the replication group to ACK seq ${seq}`,
+  )
+}
+
+async function raiseDurabilityPointForWrite(engine: ReplicationEngine, seq: bigint, term: bigint): Promise<void> {
+  await updateInSyncSetFromCurrent(engine, {
+    purpose: WRITE_PROGRESS_PURPOSE,
+    known: engine.coordinatorState ?? undefined,
+    primaryTerm: term,
+    change: base =>
+      base.durabilityPointSeq >= seq ? null : { inSyncNodeIds: base.inSyncNodeIds, durabilityPointSeq: seq },
+  })
 }
 
 /**
- * Returns once a write meets its write concern. In coordinator mode, a `majority` or `all` write waits for the voters
- * that the group state names, then records the write's progress with the coordinator. When that record returns other
- * voters, which happens when a voter change commits during the write, this node waits again for the returned voters
- * before it acknowledges the write.
+ * Returns once a write meets its write concern. In coordinator mode, a `majority` write waits until every in-sync
+ * voter holds it and those voters are a majority of the voters, counting the voters in the newest group state that
+ * this node holds, and an `all` write waits for every voter that is not draining. At feature level 1, this node also
+ * raises the group's durability point to the write's position before it acknowledges the write.
  *
  * @param engine - The engine of the node that accepted the write.
  * @param seq - The write's position in this node's change log.
@@ -122,24 +122,25 @@ export async function waitForWriteConcern(
   if (engine.history.termStartTerm !== state.primaryTerm) await ensurePrimaryTermStart(engine)
   const level = wc.level
   if (level !== 'majority' && level !== 'all') return
-  assertPrimaryInTerm(engine, state, state.primaryTerm, WRITE_PROGRESS_PURPOSE)
-  if (engine.history.termStartTerm !== state.primaryTerm) {
+  const term = state.primaryTerm
+  assertPrimaryInTerm(engine, state, term, WRITE_PROGRESS_PURPOSE)
+  if (engine.history.termStartTerm !== term) {
     throw new StalePrimaryError(
-      `This node has not recorded the start of term ${state.primaryTerm}, so it cannot prove its authority for the write`,
+      `This node has not recorded the start of term ${term}, so it cannot prove its authority for the write`,
       errorDetails(engine, state),
     )
   }
 
   const deadline = Date.now() + timeoutMs
-  let counted = state
+  const holdsAt = level === 'majority' ? inSyncVotersHold : eligibleVotersHold
   for (;;) {
-    const remainingMs = deadline - Date.now()
-    if (remainingMs <= 0) {
-      throw new WriteConcernError(`Timed out waiting for the voters of the replication group to ACK seq ${seq}`)
-    }
-    await waitForVoters(engine, seq, level, counted, remainingMs)
-    const recorded = await updateCoordinatorProgressAfterWrite(engine, seq, counted)
-    if (sameNodeIdSet(recorded.votingDataBearingNodeIds, counted.votingDataBearingNodeIds)) return
-    counted = recorded
+    await waitForVoters(engine, seq, level, term, deadline)
+    const current = engine.coordinatorState ?? state
+    assertPrimaryInTerm(engine, current, term, WRITE_PROGRESS_PURPOSE)
+    if (current.featureLevel >= IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL) return
+    await raiseDurabilityPointForWrite(engine, seq, term)
+    const recorded = engine.coordinatorState ?? current
+    assertPrimaryInTerm(engine, recorded, term, WRITE_PROGRESS_PURPOSE)
+    if (holdsAt(engine, seq, recorded)) return
   }
 }

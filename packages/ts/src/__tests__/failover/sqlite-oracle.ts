@@ -49,6 +49,20 @@ export function readHighestAppliedSeq(dbPath: string, sourceNodeId: string): big
   }
 }
 
+export function readRolledBackItemInsertIds(dbPath: string): number[] {
+  const connection = new DatabaseSync(dbPath, { readOnly: true })
+  try {
+    const rows = connection
+      .prepare(
+        "SELECT new_data FROM _sirannon_rolled_back_changes WHERE table_name = 'failover_items' AND operation = 'INSERT' AND compared_with_primary = 1 ORDER BY seq",
+      )
+      .all() as Array<{ new_data: string }>
+    return rows.map(row => Number((JSON.parse(row.new_data) as { id: number }).id))
+  } finally {
+    connection.close()
+  }
+}
+
 export function readMetaValue(dbPath: string, key: string): string | null {
   const connection = new DatabaseSync(dbPath, { readOnly: true })
   try {

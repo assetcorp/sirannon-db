@@ -35,6 +35,10 @@ export interface SetReplicationGroupStateInput {
   pendingVoterNodeIds?: string[]
   /** Sets the versions that the group requires of its members. */
   compatibility?: CoordinatorCompatibilityMetadata
+  /** Sets the group's feature level, which defaults to 1. */
+  featureLevel?: number
+  /** Sets the last term in which the in-sync set held a majority of the voters. A new group defaults to 0, and an overwrite of an existing group defaults to `primaryTerm`, so that a restarted primary proves its copy before it keeps its duty. */
+  inSyncMajorityTerm?: bigint
 }
 
 /**
@@ -151,9 +155,9 @@ export interface UpdateInSyncSetInput {
 /**
  * Describes one caught-up node to add to the in-sync set, with the progress that qualifies it. The coordinator admits
  * the node only when `sourceNodeId` is the current primary, `appliedSeq` reaches the group's durability point, and the
- * node is neither draining nor faulted. It admits a repairing node only when `rejoinSyncCompleted` is true, and it then
- * clears that node's repairing flag. It admits a pending voter on the same terms, and moves it into the voters in the
- * write that admits it.
+ * node is neither draining nor faulted. It admits a repairing node, or clears its repairing flag, only when
+ * `rejoinSyncCompleted` is true. It admits a pending voter on the same terms, and moves it into the voters in the write
+ * that admits it.
  *
  * @public
  */
@@ -170,8 +174,24 @@ export interface AdmitNodeToInSyncSetInput {
   appliedSeq: bigint
   /** Holds the primary term in whose change log `appliedSeq` counts. When it is set, the coordinator admits the node only while the group is still at this term. */
   expectedPrimaryTerm?: bigint
-  /** Is true when the node has finished the full copy that rejoins it after a repair, which the coordinator requires before it admits a repairing node. */
+  /** Is true when the node has finished the full copy that rejoins it after a repair, which the coordinator requires before it admits a repairing node or clears its repairing flag. */
   rejoinSyncCompleted?: boolean
+  /** Is true when the request only clears the node's repairing flag and leaves the in-sync set unchanged, so that the primary admits the node from its acknowledgements. */
+  clearRepairingOnly?: boolean
+}
+
+/**
+ * Describes a raise of a group's feature level.
+ *
+ * @public
+ */
+export interface RaiseFeatureLevelInput {
+  /** Identifies the cluster that contains the group. */
+  clusterId: string
+  /** Identifies the group. */
+  groupId: string
+  /** Sets the level to raise the group to, which every member's live session must support. */
+  featureLevel: number
 }
 
 /**

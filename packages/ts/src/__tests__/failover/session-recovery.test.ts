@@ -5,6 +5,7 @@ import {
   expectExactlyOneWritablePrimary,
   expectGroupHolds,
   waitForGroup,
+  waitForInSyncSet,
   waitForSessionGone,
 } from './gate-cluster-state.js'
 import { CLUSTER_ID, GROUP_ID, NODE_A, NODE_B, NODE_C, NODE_IDS, requireNode, setEtcdLink } from './gate-environment.js'
@@ -52,6 +53,10 @@ describe('the session a node holds in etcd', () => {
     expect(seen.session?.createRevision).toBeGreaterThan(before.createRevision)
     expect(seen.session?.etcdLeaseId).not.toBe(before.etcdLeaseId)
     await waitForStatus(requireNode(env, NODE_A), status => status.coordinator?.authority === true, 15_000, 'authority')
+    for (const nodeId of [NODE_B, NODE_C]) {
+      await env.coordinator.updateNodeMaintenance({ clusterId: CLUSTER_ID, groupId: GROUP_ID, nodeId, draining: false })
+    }
+    await waitForInSyncSet(env, NODE_IDS, 15_000)
 
     const second = itemRow(2, NODE_A, 'after-the-new-lease')
     await writeItemMajority(requireNode(env, NODE_A), second)

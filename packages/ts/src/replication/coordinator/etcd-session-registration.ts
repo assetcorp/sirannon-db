@@ -47,6 +47,7 @@ export async function registerEtcdNodeSession(
     dataBearing: input.dataBearing ?? true,
     voting: input.voting ?? true,
     compatibility: cloneCompatibility(input.compatibility),
+    ...(input.featureLevel === undefined ? {} : { featureLevel: input.featureLevel }),
     metadata: cloneMetadata(input.metadata),
   }
 
@@ -84,6 +85,7 @@ export async function registerEtcdNodeSession(
       dataBearing: session.dataBearing,
       voting: session.voting,
       compatibility: cloneCompatibility(session.compatibility),
+      ...(session.featureLevel === undefined ? {} : { featureLevel: session.featureLevel }),
       metadata: cloneMetadata(session.metadata),
     },
   })

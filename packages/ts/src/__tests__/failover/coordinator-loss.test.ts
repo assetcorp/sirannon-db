@@ -89,7 +89,7 @@ describe('losing contact with etcd', () => {
     await waitForSessionGone(env, NODE_A, 15_000)
     const promotion = await waitForPrimary(env, [NODE_B, NODE_C], 30_000)
     expect(promotion.primaryTerm).toBe(2n)
-    expect(promotion.repairingNodeIds).toContain(NODE_A)
+    expect(promotion.inSyncNodeIds).not.toContain(NODE_A)
     const promoted = promotion.currentPrimary.nodeId
     await waitForItemsOnDisk(env, [promoted], acknowledged, 10_000)
     await expectItemsAbsentOnDisk(env, NODE_IDS, [90, 91], 1_000)

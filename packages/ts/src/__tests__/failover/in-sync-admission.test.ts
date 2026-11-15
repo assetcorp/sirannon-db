@@ -53,14 +53,18 @@ async function expectAdmittedHoldingRows(
 describe('the in-sync set and its durability point', () => {
   const environment = useFailoverEnvironment()
 
-  it('records the durability point of each acknowledged write and refuses to readmit a voter without proof', async () => {
+  it('keeps the durability point at the start of the term while it removes a cut-off voter, and refuses to readmit the voter without proof', async () => {
     const env = environment()
     await startCluster(env)
+    await waitForInSyncSet(env, [NODE_A, NODE_B, NODE_C], 15_000)
+    const atTermStart = await waitForGroup(env, () => true, 1_000, 'the group state')
     await setReplicationLinks(env, NODE_C, false)
     await writeRows(env, NODE_A, [1, 2, 3], 'c-is-cut-off')
 
     const afterWrites = await waitForInSyncSet(env, [NODE_A, NODE_B], 10_000)
-    expect(afterWrites.durabilityPointSeq).toBe(readHighestOwnChangeSeq(dbPathFor(env, NODE_A), NODE_A))
+    expect(afterWrites.primaryTerm).toBe(atTermStart.primaryTerm)
+    expect(afterWrites.durabilityPointSeq).toBe(atTermStart.durabilityPointSeq)
+    expect(afterWrites.durabilityPointSeq).toBeLessThan(readHighestOwnChangeSeq(dbPathFor(env, NODE_A), NODE_A))
 
     await expect(
       env.coordinator.updateInSyncSet({
@@ -69,13 +73,6 @@ describe('the in-sync set and its durability point', () => {
         inSyncNodeIds: [NODE_A, NODE_B, NODE_C],
       }),
     ).rejects.toThrow(/catch-up proof/)
-    await env.coordinator.admitNodeToInSyncSet({
-      clusterId: CLUSTER_ID,
-      groupId: GROUP_ID,
-      nodeId: NODE_C,
-      sourceNodeId: NODE_A,
-      appliedSeq: afterWrites.durabilityPointSeq - 1n,
-    })
     await env.coordinator.admitNodeToInSyncSet({
       clusterId: CLUSTER_ID,
       groupId: GROUP_ID,
@@ -108,8 +105,7 @@ describe('the in-sync set and its durability point', () => {
       { writeConcern: { level: 'all', timeoutMs: 5_000 } },
     )
     const afterDrain = await env.etcdOracle.group()
-    expect(afterDrain?.durabilityPointSeq).toBe(readHighestOwnChangeSeq(dbPathFor(env, NODE_A), NODE_A))
-    expect(afterDrain?.durabilityPointSeq).toBeGreaterThan(afterWrites.durabilityPointSeq)
+    expect(afterDrain?.durabilityPointSeq).toBe(atTermStart.durabilityPointSeq)
     expect(afterDrain?.inSyncNodeIds).toEqual([NODE_A, NODE_B])
   })
 

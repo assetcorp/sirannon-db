@@ -28,6 +28,7 @@ export interface FailoverNodeConfig {
   votingDataBearingNodeIds?: string[]
   seedSchema: boolean
   sessionTtlMs: number
+  maxReplicaLagMs?: number
   controllerLeaseTtlMs: number
   controllerTickIntervalMs: number
   controllerEnabled: boolean
@@ -35,6 +36,7 @@ export interface FailoverNodeConfig {
   initialSync?: boolean
   backupDirectory?: string
   dieAfterGroupCreate?: boolean
+  publishedRelease?: boolean
   compatibility: {
     packageVersion: string
     specVersion: string

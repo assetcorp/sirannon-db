@@ -5,6 +5,7 @@ import type {
   CompareAndAdvancePrimaryTermResult,
   CreateReplicationGroupStateResult,
   PromoteEligibleReplicaInput,
+  RaiseFeatureLevelInput,
   RemoveVoterInput,
   SetReplicationGroupStateInput,
   UpdateInSyncSetInput,
@@ -19,6 +20,7 @@ export type {
   CompareAndAdvancePrimaryTermResult,
   CreateReplicationGroupStateResult,
   PromoteEligibleReplicaInput,
+  RaiseFeatureLevelInput,
   RemoveVoterInput,
   SetReplicationGroupStateInput,
   UpdateInSyncSetInput,
@@ -138,6 +140,8 @@ export interface RegisterNodeSessionInput {
   voting?: boolean
   /** Holds the versions that the node publishes. */
   compatibility?: CoordinatorCompatibilityMetadata
+  /** Sets the highest group feature level that the node supports, which defaults to 1. */
+  featureLevel?: number
   /** Holds any other data to record with the session. */
   metadata?: Record<string, unknown>
 }
@@ -166,6 +170,8 @@ export interface CoordinatorNodeSession {
   voting: boolean
   /** Holds the versions that the node publishes. */
   compatibility?: CoordinatorCompatibilityMetadata
+  /** Holds the highest group feature level that the node supports, or is undefined for a node that supports only level 1. */
+  featureLevel?: number
   /** Holds any other data that the node records with the session. */
   metadata?: Record<string, unknown>
 }
@@ -214,6 +220,10 @@ export interface ReplicationGroupState {
   pendingVoterNodeIds: string[]
   /** Holds the versions that the group requires of its members. */
   compatibility?: CoordinatorCompatibilityMetadata
+  /** Holds the group's feature level, which an operator raises once every member supports the next one. At level 1 the primary records the durability point of every write, and from level 2 it records it only when its term starts. A group state written before this field existed reads as level 1. */
+  featureLevel: number
+  /** Holds the last term in which the in-sync set held a majority of the voters, which is the only kind of term in which the primary can acknowledge a `majority` write. A group state written before this field existed reads as 0. */
+  inSyncMajorityTerm: bigint
   /** Holds the time, in milliseconds since the Unix epoch, of the last change to this state. */
   updatedAtMs: number
 }
@@ -294,6 +304,8 @@ export interface ClusterCoordinator {
   addVoter(input: AddVoterInput): Promise<VoterChangeResult>
   /** Removes a voter or a pending voter from the group and from every set that the group records for it, but only while the group's voters match `expectedVoterNodeIds`. Throws a `RangeError` for the current primary, for a voter while another node is pending, for a node outside the group, and for a removal after which the in-sync voters are fewer than a majority of the voters. */
   removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult>
+  /** Raises the group's feature level, but only while every member holds a live session that supports the new level. Throws a `RangeError` for a level lower than the group's and for a member without such a session. */
+  raiseFeatureLevel(input: RaiseFeatureLevelInput): Promise<ReplicationGroupState | null>
   /** Promotes an eligible in-sync replica while the group has no primary or while its primary is one of `excludeNodeIds`. When another node already holds primary duty, the method returns the group unchanged. When no replica qualifies, it throws a `NoSafePrimaryError`. */
   promoteEligibleReplica(input: PromoteEligibleReplicaInput): Promise<ReplicationGroupState>
   /** Releases every connection, watch, and lease that the coordinator keeps open. */

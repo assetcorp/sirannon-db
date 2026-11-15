@@ -188,6 +188,8 @@ export interface CoordinatorModeConfig {
   coordinator: ClusterCoordinator
   /** Sets how many milliseconds this node's session lasts before the node has to renew it. */
   sessionTtlMs?: number
+  /** Sets how many milliseconds an in-sync replica can leave a change unacknowledged before the primary removes it from the in-sync set, which defaults to 1000. Keep it well below the write-concern timeout, because a `majority` write waits for every in-sync replica until the primary removes the one that stalls. */
+  maxReplicaLagMs?: number
   /** Turns this node's controller loop on or off, or configures it. The loop is on by default. */
   controller?: boolean | CoordinatorControllerConfig
   /** Sets the versions that this node publishes, which the engine also records as the group's requirement when it creates the group. */

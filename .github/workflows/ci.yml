@@ -5,18 +5,49 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_call:
+    inputs:
+      suites:
+        description: The comma-separated suites to run, out of ci-node, ci-e2e, ci-large-backups, and ci-benchmarks, or empty for every suite
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Decide whether this push changes more than a release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      release_only: ${{ steps.scope.outputs.release_only }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compare the push with the commit before it
+        id: scope
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: node .github/scripts/ci-scope.js --release-only
+
   ci:
     name: Node ${{ matrix.node-version }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' && (!inputs.suites || contains(format(',{0},', inputs.suites), ',ci-node,')) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -60,17 +91,23 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Build the streaming extension for this runner
-        working-directory: packages/ts
-        run: pnpm build:vfs
+      - name: Restore or build the streaming extension for this runner
+        uses: ./.github/actions/native-binary
+        with:
+          binary: vfs
+          from-source: ${{ github.event_name == 'workflow_dispatch' }}
 
-      - name: Build Sirannon's SQLite for this runner
-        working-directory: packages/ts
-        run: pnpm build:sqlite
+      - name: Restore or build Sirannon's SQLite for this runner
+        uses: ./.github/actions/native-binary
+        with:
+          binary: sqlite
+          from-source: ${{ github.event_name == 'workflow_dispatch' }}
 
-      - name: Build the SQLCipher that expo-sqlite vendors, for the Expo tests
-        working-directory: packages/ts
-        run: pnpm build:expo-sqlcipher
+      - name: Restore or build the SQLCipher that expo-sqlite vendors, for the Expo tests
+        uses: ./.github/actions/native-binary
+        with:
+          binary: expo-sqlcipher
+          from-source: ${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Lint
         run: pnpm lint
@@ -115,7 +152,10 @@ jobs:
 
   benchmarks-writeup:
     name: Benchmarks writeup drift
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' && (!inputs.suites || contains(format(',{0},', inputs.suites), ',ci-benchmarks,')) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -126,7 +166,10 @@ jobs:
 
   benchmarks-harness:
     name: Benchmarks harness tests
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' && (!inputs.suites || contains(format(',{0},', inputs.suites), ',ci-benchmarks,')) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -142,7 +185,10 @@ jobs:
 
   e2e:
     name: Replication E2E (Node ${{ matrix.node-version }})
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' && (!inputs.suites || contains(format(',{0},', inputs.suites), ',ci-e2e,')) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -169,9 +215,11 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Build Sirannon's SQLite for this runner
-        working-directory: packages/ts
-        run: pnpm build:sqlite
+      - name: Restore or build Sirannon's SQLite for this runner
+        uses: ./.github/actions/native-binary
+        with:
+          binary: sqlite
+          from-source: ${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Replication E2E
         run: pnpm nx run sirannon-ts:test:e2e
@@ -180,7 +228,10 @@ jobs:
 
   large-backups:
     name: Backups past the pending byte page
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' && (!inputs.suites || contains(format(',{0},', inputs.suites), ',ci-large-backups,')) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -203,9 +254,11 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Build the streaming extension for this runner
-        working-directory: packages/ts
-        run: pnpm build:vfs
+      - name: Restore or build the streaming extension for this runner
+        uses: ./.github/actions/native-binary
+        with:
+          binary: vfs
+          from-source: ${{ github.event_name == 'workflow_dispatch' }}
 
       - name: Copies larger than 1 GiB
         run: pnpm nx run sirannon-ts:test:large

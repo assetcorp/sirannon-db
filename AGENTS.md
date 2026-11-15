@@ -34,6 +34,8 @@ Read the file you're editing and follow what it already does. The rules below co
 - **The end-to-end suite runs two nodes in one process over loopback gRPC and needs no Docker.** Import its harness rather than building certificates, nodes, or temp directories by hand, and assert convergence with `waitForReplica`. Only the failover suite needs Docker.
 - **A generator writes `BENCHMARKS.md`, `nx release` writes `CHANGELOG.md`, and `pnpm proto:gen` writes the gRPC directory.** Edit the source each one reads. Continuous integration fails when `BENCHMARKS.md` differs from what the generator produces.
 - **The supply-chain gate refuses a package published less than four days ago.** Install with `pnpm add -E` from inside the target workspace.
+- **CI restores each native binary from a cache entry whose key lists every input that its build reads.** `.github/scripts/native-build-key.mjs` builds that key, so when a build starts to read a new file, package, or tool, add it there, or CI can restore a binary that is out of date.
+- **A release reuses a suite from main only through the job names in `.github/scripts/release-suites.js`.** When you rename a job in `ci.yml`, `failover.yml`, or the two native workflows, rename it there too, because otherwise every release runs that suite again.
 
 Read `CONTRIBUTING.md` for the house style. The `/grill-with-docs` skill writes the decision records in `docs/adr/`, so load that skill for an architectural decision whenever it's available. Preserve the automatic-failover invariants when you change replication code.
 

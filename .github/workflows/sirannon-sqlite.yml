@@ -1,19 +1,52 @@
 name: Sirannon SQLite
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
   workflow_call:
+    inputs:
+      from-source:
+        description: Build every binary from source and leave the cache alone, as a release does
+        required: false
+        type: boolean
+        default: false
+      reuse-checks-from-run:
+        description: A push run of publish.yml on main that passed these platform checks on the same inputs, so that each binary that matches that run's byte for byte reuses its check
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 jobs:
+  scope:
+    name: Decide whether this change needs the Sirannon SQLite checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: ${{ github.event_name == 'pull_request' && 0 || 1 }}
+
+      - name: Compare the change with the paths that the Sirannon SQLite checks read
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/ci-scope.js --platform-checks sqlite
+
   build:
     name: Build ${{ matrix.target }}
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.run != 'false' }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -63,9 +96,12 @@ jobs:
         with:
           version: 0.16.0
 
-      - name: Build Sirannon's SQLite
-        working-directory: packages/ts
-        run: pnpm build:sqlite ${{ matrix.target }}
+      - name: Restore or build Sirannon's SQLite
+        uses: ./.github/actions/native-binary
+        with:
+          binary: sqlite
+          target: ${{ matrix.target }}
+          from-source: ${{ inputs.from-source == true }}
 
       - name: Upload the binary
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -74,32 +110,59 @@ jobs:
           path: native/sqlite/out/${{ matrix.target }}/better_sqlite3.node
           if-no-files-found: error
 
+  select:
+    name: Choose the Sirannon SQLite checks that this run owes
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      artifacts: ${{ steps.select.outputs.artifacts }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download the binaries that this run built
+        if: inputs.reuse-checks-from-run != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: sirannon-sqlite-*
+          path: ${{ runner.temp }}/built
+
+      - name: Compare each binary with the one that main's passing run checked
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REUSE_RUN: ${{ inputs.reuse-checks-from-run }}
+          LOCAL_ARTIFACTS: ${{ runner.temp }}/built
+          CHECK_MATRIX: >-
+            [
+            {"target": "linux-x64", "runner": "ubuntu-latest", "uwebsockets": true, "artifact": "sirannon-sqlite-linux-x64"},
+            {"target": "linux-arm64", "runner": "ubuntu-24.04-arm", "uwebsockets": true, "artifact": "sirannon-sqlite-linux-arm64"},
+            {"target": "win32-x64", "runner": "windows-latest", "uwebsockets": true, "artifact": "sirannon-sqlite-win32-x64"},
+            {"target": "win32-arm64", "runner": "windows-11-arm", "uwebsockets": false, "artifact": "sirannon-sqlite-win32-arm64"},
+            {"target": "darwin-arm64", "runner": "macos-15", "uwebsockets": true, "artifact": "sirannon-sqlite-darwin-arm64"},
+            {"target": "darwin-x64", "runner": "macos-15-intel", "uwebsockets": true, "artifact": "sirannon-sqlite-darwin-x64"},
+            {"target": "linux-x64-musl", "artifact": "sirannon-sqlite-linux-x64-musl"},
+            {"target": "linux-arm64-musl", "artifact": "sirannon-sqlite-linux-arm64-musl"}
+            ]
+        run: node .github/scripts/native-binary-match.js --select
+
   check:
     name: Check on ${{ matrix.target }}
-    needs: build
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && contains(needs.select.outputs.matrix, '"runner"') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: linux-x64
-            runner: ubuntu-latest
-            uwebsockets: true
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-            uwebsockets: true
-          - target: win32-x64
-            runner: windows-latest
-            uwebsockets: true
-          - target: win32-arm64
-            runner: windows-11-arm
-            uwebsockets: false
-          - target: darwin-arm64
-            runner: macos-15
-            uwebsockets: true
-          - target: darwin-x64
-            runner: macos-15-intel
-            uwebsockets: true
+        include: ${{ fromJSON(needs.select.outputs.matrix) }}
 
     steps:
       - name: Checkout
@@ -120,7 +183,7 @@ jobs:
       - name: Download the binary for this runner
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: sirannon-sqlite-${{ matrix.target }}
+          name: ${{ matrix.artifact }}
           path: native/sqlite/out/${{ matrix.target }}
 
       - name: Check the build
@@ -163,8 +226,10 @@ jobs:
 
   check-musl-arm64:
     name: Check on linux-arm64-musl
-    needs: build
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.artifacts), 'sirannon-sqlite-linux-arm64-musl') }}
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -193,8 +258,10 @@ jobs:
 
   check-musl-x64:
     name: Check on linux-x64-musl
-    needs: build
+    needs: select
+    if: ${{ !cancelled() && needs.select.result == 'success' && contains(fromJSON(needs.select.outputs.artifacts), 'sirannon-sqlite-linux-x64-musl') }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     container: node:24-alpine
 
     steps:

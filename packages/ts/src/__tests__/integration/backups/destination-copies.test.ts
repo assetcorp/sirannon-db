@@ -192,7 +192,7 @@ describe('a destination that fails, hangs, or holds pieces another run left', ()
   it('stops a destination that never answers once destinationTimeoutMs passes, and waits without a limit at zero', async () => {
     const db = await workspace.open('deadline')
     const labels = await seedOrders(db, 'order', 200, ORDER_PADDING)
-    const destination = workspace.destination()
+    const destination = workspace.destination('bucket', { blockingFileCalls: true })
     destination.faults.holdWrite = (name, index) =>
       name === 'hung.db' && index === 1 ? new Promise<void>(() => {}) : undefined
 

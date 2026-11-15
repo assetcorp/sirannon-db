@@ -197,7 +197,9 @@ export class FailoverNodeProcess {
     return (await this.request('liveItemIds', {}, 10_000)) as number[] | null
   }
 
-  async holdInSyncUpdates(filter: { removesNodeId?: string } = {}): Promise<void> {
+  async holdInSyncUpdates(
+    filter: { removesNodeId?: string; admissions?: boolean; admitsNodeId?: string } = {},
+  ): Promise<void> {
     await this.request('holdInSyncUpdates', filter, 10_000)
   }
 
@@ -213,6 +215,16 @@ export class FailoverNodeProcess {
 
   async reconnectTransport(): Promise<void> {
     await this.request('reconnectTransport', {}, 20_000)
+  }
+
+  async copyTraffic(
+    action: 'hold' | 'release' | 'count',
+    kind?: 'request' | 'batch' | 'ack',
+    peerId?: string,
+  ): Promise<number> {
+    const count = await this.request('copyTraffic', { action, kind, peerId }, 10_000)
+    if (typeof count !== 'number') throw new Error('The traffic hold returned no count')
+    return count
   }
 
   async sendRawBatch(peerId: string, batch: ReplicationBatch): Promise<void> {

@@ -313,8 +313,8 @@ export async function answerSyncFromHistory(
   if (request.historyTail && engine.history.termStartTerm !== engine.coordinatorState?.primaryTerm) return true
   const shared = await selectSharedHistoryPoint(engine, request.historyTail)
   if (shared === null) {
+    await resetJoinerForCopy(engine, fromPeerId, request)
     await removeJoinerFromInSyncSet(engine, fromPeerId)
-    resetJoinerForCopy(engine, fromPeerId, request)
     if (!request.historyTail) return false
     await engine.config.transport.sendSyncComplete(
       fromPeerId,

@@ -5,19 +5,26 @@ import type { ReplicationEngine } from './engine.js'
  * Forgets, as primary, what a joiner acknowledged over its current connection, because the copy that the joiner
  * requests replaces the rows that those acknowledgements describe. For a request that names no history transaction,
  * which this node answers with a full copy, it also records the request, so that from then on only an acknowledgement
- * that names this copy admits the joiner or counts toward a write concern.
+ * that names this copy admits the joiner or counts toward a write concern. It then waits for any pending admission
+ * to finish, so that the caller can remove the joiner after that admission and before streaming the copy.
  *
  * @param engine - The primary's engine.
  * @param joinerNodeId - The joiner's node ID.
  * @param request - The joiner's sync request.
+ * @returns A promise that settles once any pending admission has finished.
  *
  * @internal
  */
-export function resetJoinerForCopy(engine: ReplicationEngine, joinerNodeId: string, request: SyncRequest): void {
+export async function resetJoinerForCopy(
+  engine: ReplicationEngine,
+  joinerNodeId: string,
+  request: SyncRequest,
+): Promise<void> {
   engine.peerTracker.forgetConnectionAcks(joinerNodeId)
   const term = engine.coordinatorState?.primaryTerm
   if (request.historyTail || term === undefined) return
   engine.inSync.copyProofs.set(joinerNodeId, { requestId: request.requestId, term })
+  await engine.inSync.pendingAdmissions.get(joinerNodeId)
 }
 
 /**

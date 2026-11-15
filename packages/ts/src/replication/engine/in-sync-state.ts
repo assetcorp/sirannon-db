@@ -55,8 +55,8 @@ export class InSyncState {
   reconciling = false
   /** Is true while a removal of lagging replicas waits for the coordinator. */
   removing = false
-  /** Lists the replicas whose admission this node has requested and the coordinator has not yet answered. */
-  readonly pendingAdmissions = new Set<string>()
+  /** Holds each replica's pending admission until the coordinator has answered, so that a full copy can wait for it. */
+  readonly pendingAdmissions = new Map<string, Promise<void>>()
   /** Holds the highest sequence that this node has acknowledged as primary in its current term. */
   acknowledgedSeq = 0n
   /** Holds the samples of this node's newest assigned sequence, oldest first. */

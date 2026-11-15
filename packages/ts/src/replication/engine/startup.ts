@@ -2,7 +2,7 @@ import { loadPersistedHlc } from '../../core/sync/hlc-store.js'
 import { selectMaxAppliedSourceSeqByNode, setForeignKeysEnabled } from '../../core/system-catalog/index.js'
 import { SyncError } from '../errors.js'
 import { startCoordinatorMode, stopCoordinatorMode, stopCoordinatorTimers } from './coordinator-lifecycle.js'
-import { prepareCoordinatorRejoinIfNeeded, requiresCoordinatorRejoinSync } from './coordinator-membership.js'
+import { prepareCoordinatorRejoinIfNeeded } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { refreshMemberAddresses } from './member-addresses.js'
 import { reportEngineError } from './report-error.js'
@@ -74,9 +74,8 @@ async function startEngineSteps(engine: ReplicationEngine): Promise<void> {
 
   const isPrimary = engine.isCoordinatorMode() ? engine.coordinatorAuthority : engine.config.topology.role === 'primary'
   const syncCompleted = await engine.log.isSyncCompleted()
-  const rejoinSyncRequired = requiresCoordinatorRejoinSync(engine, engine.coordinatorState)
 
-  if (engine.initialSync && !isPrimary && (!syncCompleted || rejoinSyncRequired)) {
+  if (engine.initialSync && !isPrimary && !syncCompleted) {
     const savedState = await engine.log.getSyncState()
     if (savedState.phase === 'syncing') {
       if (!engine.tracker) {

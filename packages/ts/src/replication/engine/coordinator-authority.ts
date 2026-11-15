@@ -63,6 +63,7 @@ export function applyCoordinatorState(engine: ReplicationEngine, next: Replicati
   noteCoordinatorContact(engine)
   engine.coordinatorState = next
   engine.coordinatorAuthority = next ? hasCurrentPrimaryAuthorityFor(engine, next) : false
+  engine.peerTracker.recheckWaiters()
   if (!next || !wasPrimary || engine.coordinatorAuthority) return false
   if (next.primaryTerm <= (previous?.primaryTerm ?? 0n)) return false
   engine.coordinatorDemotionHandler?.(next)
@@ -144,6 +145,11 @@ export async function canAcceptLocalWrite(engine: ReplicationEngine): Promise<bo
   if (!hasCurrentPrimaryAuthorityFor(engine, state)) {
     return false
   }
+  assertEligiblePrimary(engine, state)
+  return true
+}
+
+function assertEligiblePrimary(engine: ReplicationEngine, state: ReplicationGroupState): void {
   assertLocalCompatibility(engine, state)
   if (state.drainingNodeIds.includes(engine.nodeId)) {
     throw new NodeDrainingError('Node is draining and cannot accept writes', errorDetails(engine, state))
@@ -155,7 +161,24 @@ export async function canAcceptLocalWrite(engine: ReplicationEngine): Promise<bo
       errorDetails(engine, state),
     )
   }
-  return true
+  assertNoRestartProofPending(engine)
+}
+
+/**
+ * Refuses a write while this restarted primary waits to prove that it lost no acknowledged write.
+ *
+ * @param engine - The node's engine.
+ * @throws AuthorityError with code `AUTHORITY_LOST` while the proof is pending.
+ *
+ * @internal
+ */
+export function assertNoRestartProofPending(engine: ReplicationEngine): void {
+  if (!engine.inSync.restartProof) return
+  throw new AuthorityError(
+    'This primary restarted and accepts no writes until an in-sync voter shows that it lost no acknowledged write',
+    'AUTHORITY_LOST',
+    errorDetails(engine, engine.coordinatorState),
+  )
 }
 
 export function throwNotCurrentPrimary(engine: ReplicationEngine): never {
@@ -203,17 +226,7 @@ export async function verifyPrimaryAuthority(engine: ReplicationEngine): Promise
       errorDetails(engine, state),
     )
   }
-  assertLocalCompatibility(engine, state)
-  if (state.drainingNodeIds.includes(engine.nodeId)) {
-    throw new NodeDrainingError('Node is draining and cannot accept writes', errorDetails(engine, state))
-  }
-  if (state.repairingNodeIds.includes(engine.nodeId) || state.faultedNodeIds.includes(engine.nodeId)) {
-    throw new AuthorityError(
-      'Node is not eligible to accept writes while repair or fault state is active',
-      'AUTHORITY_LOST',
-      errorDetails(engine, state),
-    )
-  }
+  assertEligiblePrimary(engine, state)
   return state
 }
 

@@ -45,7 +45,6 @@ describe('losing the primary', () => {
     await killNode(env, NODE_A)
     const firstPromotion = await waitForPrimary(env, [NODE_B, NODE_C], 30_000)
     expect(firstPromotion.primaryTerm).toBe(2n)
-    expect(firstPromotion.repairingNodeIds).toContain(NODE_A)
     expect(firstPromotion.inSyncNodeIds).not.toContain(NODE_A)
     const promoted = firstPromotion.currentPrimary.nodeId
     const survivor = promoted === NODE_B ? NODE_C : NODE_B
@@ -53,7 +52,7 @@ describe('losing the primary', () => {
     await killNode(env, promoted)
     const secondPromotion = await waitForPrimary(env, [survivor], 30_000)
     expect(secondPromotion.primaryTerm).toBe(3n)
-    expect(secondPromotion.repairingNodeIds).toContain(promoted)
+    expect(secondPromotion.inSyncNodeIds).not.toContain(promoted)
     await waitForItemsOnDisk(env, [survivor], acknowledged, 10_000)
 
     await restartNode(env, promoted, { role: 'primary' })
@@ -159,7 +158,7 @@ describe('losing the primary', () => {
 
   it('sends the subscribers and live queries of a replica a delete for every row that it discards after a failover', async () => {
     const env = environment()
-    await startCluster(env)
+    await startCluster(env, { perNode: { [NODE_A]: { maxReplicaLagMs: 60_000 } } })
     await writeItemMajority(requireNode(env, NODE_A), itemRow(1, NODE_A, 'acknowledged-by-majority'))
     await waitForInSyncSet(env, [NODE_A, NODE_B, NODE_C], 15_000)
     const replica = requireNode(env, NODE_C)

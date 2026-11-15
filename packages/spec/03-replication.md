@@ -94,7 +94,25 @@ CREATE TABLE _sirannon_sync_state (        -- first-sync progress
   completed_at   REAL,
   request_id     TEXT
 );
+
+CREATE TABLE _sirannon_rolled_back_changes (   -- history changes that the node undid
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  seq                 INTEGER NOT NULL UNIQUE,
+  rolled_back_at      REAL NOT NULL,
+  rolled_back_in_term TEXT NOT NULL,
+  table_name          TEXT NOT NULL,
+  operation           TEXT NOT NULL,
+  row_id              TEXT NOT NULL,
+  old_data            TEXT,
+  new_data            TEXT,
+  node_id             TEXT NOT NULL,
+  tx_id               TEXT NOT NULL,
+  hlc                 TEXT NOT NULL,
+  compared_with_primary INTEGER NOT NULL
+);
 ```
+
+`_sirannon_rolled_back_changes` keeps a copy of each history change that the node undid or replaced when it reconciled its history in coordinator mode (see [History Reconciliation](09-failover.md#history-reconciliation)). Each row copies the change's `seq`, `table_name`, `operation`, `row_id`, `old_data`, `new_data`, `node_id`, `tx_id`, and `hlc` from `_sirannon_changes`, together with the time and the primary term of the reconciliation. `compared_with_primary` is 1 when the node compared its history with the primary's and found that the primary lacked the change, and 0 when the primary no longer kept the history to compare against, so that the primary can also hold the change. A node keeps one row for each `seq`, raises `compared_with_primary` to 1 when a later comparison finds the same change, and keeps the rows until an operator deletes them.
 
 A node reads its outgoing batch from `_sirannon_changes` where `seq > afterSeq` and `node_id = localNodeId`. In coordinator mode it reads every stamped change whose `node_id` is its own ID or the ID of a voting data-bearing node of its group, so that the history which earlier primaries wrote reaches every replica. It records applied remote changes in `_sirannon_applied_changes` for deduplication and merges each remote HLC into its clock through `receive`. In coordinator mode a node also records in `_sirannon_changes` each replicated schema change that it applies, stamped with the sending node's ID and the change's `txId` and HLC, so that its history holds every schema change that it can later send as primary.
 
@@ -237,6 +255,7 @@ A replication engine must register with its database when it starts and unregist
 | `syncAckTimeoutMs` | 30,000 | No |
 | `catchUpDeadlineMs` | 600,000 | No |
 | `coordinator.sessionTtlMs` | 10,000 | Yes |
+| `coordinator.maxReplicaLagMs` | 1,000 | Yes |
 | `coordinator.controller` (enabled) | true | Yes |
 | `coordinator.controller.leaseTtlMs` | 10,000 | Yes |
 | `coordinator.controller.tickIntervalMs` | 1,000 | No |
@@ -247,18 +266,18 @@ When a start fails, an implementation must leave the engine stopped, release wha
 
 ### Sender Loop
 
-Every `batchIntervalMs`, for each peer the topology replicates to (in coordinator mode, every peer while the node holds authority), the sender expires in-flight batches older than `ackTimeoutMs`, skips the peer while `pendingBatches` reaches `maxPendingBatches`, reads one batch from the peer's `lastSentSeq`, and sends it. An expired batch rewinds `lastSentSeq` to retransmit from the lost batch.
+Every `batchIntervalMs`, for each peer the topology replicates to (in coordinator mode, every peer while the node holds authority), the sender expires in-flight batches older than `ackTimeoutMs`, then reads batches from the peer's `lastSentSeq` and sends them until `pendingBatches` reaches `maxPendingBatches` or the log holds no further change for the peer, so that a peer that falls behind receives changes faster than new writes arrive. An expired batch rewinds `lastSentSeq` to retransmit from the lost batch.
 
 ### Batch Reception
 
-A receiver accepts a batch only while it is `ready` or `catching-up`, and it processes the batches from one sender one at a time, in the order in which they arrive. The receiver checks that `sourceNodeId` matches the sending peer, that the peer is known, that static-mode topology allows the sender, that the coordinator term is current, that `changes` does not exceed `maxBatchChanges`, and that the wall-clock milliseconds of `hlcRange.max` are no more than `maxClockDriftMs` ahead of the local physical clock. A batch whose `hlcRange.max` is earlier than the local physical clock passes the clock check whatever its age. In coordinator mode a replica that has not reconciled its history with the history of the batch's term discards the batch without applying or acknowledging it and starts that reconciliation, while a former primary and a repairing or faulted node process the batch (see [History Reconciliation](09-failover.md#history-reconciliation)). When `afterSeq` exceeds the highest sequence that the receiver has applied from the sender, the receiver discards the batch without applying it and sends that applied sequence as a `ReplicationAck` with an empty `batchId`. Otherwise the receiver applies the batch, prunes tables dropped by replicated DDL, records the applied sequence, and returns a `ReplicationAck`.
+A receiver accepts a batch only while it is `ready` or `catching-up`, and it processes the batches from one sender one at a time, in the order in which they arrive. The receiver checks that `sourceNodeId` matches the sending peer, that the peer is known, that static-mode topology allows the sender, that the coordinator term is current, that `changes` does not exceed `maxBatchChanges`, and that the wall-clock milliseconds of `hlcRange.max` are no more than `maxClockDriftMs` ahead of the local physical clock. A batch whose `hlcRange.max` is earlier than the local physical clock passes the clock check whatever its age. In coordinator mode a replica that has not reconciled its history with the history of the batch's term discards the batch without applying or acknowledging it and starts that reconciliation, while a repairing node that is copying processes the batch, and a faulted node or a repairing node that has not finished its full copy discards it (see [History Reconciliation](09-failover.md#history-reconciliation)). When `afterSeq` exceeds the highest sequence that the receiver has applied from the sender, the receiver discards the batch without applying it and sends that applied sequence as a `ReplicationAck` with an empty `batchId`. Otherwise the receiver applies the batch, prunes tables dropped by replicated DDL, records the applied sequence, and returns a `ReplicationAck`.
 
 ### Write Concern
 
 After a local commit the engine can wait for acknowledgements.
 
 - `local`: return after the local commit.
-- `majority`: static mode waits for `floor(connectedPeers / 2) + 1` peers; coordinator mode waits for a majority of the configured voting data-bearing nodes, counting the primary's own durable commit.
+- `majority`: in static mode the engine waits for `floor(connectedPeers / 2) + 1` peers; in coordinator mode the engine waits until every node in the in-sync set holds the write, counting its local commit, and acknowledges the write only while the voters that the coordinator records in the set, counting the primary, are a majority of the voters (see [In-Sync Set and Promotion](09-failover.md#in-sync-set-and-promotion)).
 - `all`: static mode waits for all connected peers; coordinator mode waits for all configured voting nodes that are not drained.
 
 A concern not met within the timeout (default 5,000 ms) fails with `WRITE_CONCERN_ERROR`. When a write states no concern, static mode returns after the local commit and coordinator mode uses `majority`. A coordinator-mode `majority` write remains durable across automatic failover when only the failed primary is lost and an eligible in-sync replica remains; `local` is an explicit opt-in and is not failover-safe.
@@ -267,7 +286,7 @@ A concern not met within the timeout (default 5,000 ms) fails with `WRITE_CONCER
 
 Read concern is enforced in coordinator mode; static mode ignores it.
 
-- `local`: read local state, which may later be quarantined after failover.
+- `local`: read local state, which a later failover may roll back.
 - `majority`: the node must be in the in-sync set and not draining or repairing.
 - `linearizable`: read from the current primary after it proves live authority for the term.
 

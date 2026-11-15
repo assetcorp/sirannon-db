@@ -25,7 +25,10 @@ export const NODE_B = 'failover-node-b'
 export const NODE_C = 'failover-node-c'
 export const GROUP_ID = 'orders'
 export const CLUSTER_ID = 'cluster-a'
+export const NODE_D = 'failover-node-d'
+export const NODE_E = 'failover-node-e'
 export const NODE_IDS = [NODE_A, NODE_B, NODE_C] as const
+export const FIVE_NODE_IDS = [NODE_A, NODE_B, NODE_C, NODE_D, NODE_E] as const
 export const COMPATIBILITY = {
   packageVersion: '1.0.0',
   specVersion: '1.0.0',
@@ -34,6 +37,7 @@ export const COMPATIBILITY = {
 
 export interface GateEnvironment {
   runPrefix: string
+  nodeIds: readonly string[]
   certs: MtlsCerts
   etcd: EtcdClusterHandle
   toxiproxyContainer: ToxiproxyContainerHandle
@@ -57,6 +61,7 @@ export interface NodeOptions {
   createsGroup?: boolean
   voters?: readonly string[]
   sessionTtlMs?: number
+  maxReplicaLagMs?: number
   controllerLeaseTtlMs?: number
   controllerTickIntervalMs?: number
   controllerEnabled?: boolean
@@ -70,14 +75,15 @@ export interface NodeOptions {
   awaitReady?: boolean
   initialSync?: boolean
   dieAfterGroupCreate?: boolean
+  publishedRelease?: boolean
 }
 
-export async function startEnvironment(): Promise<GateEnvironment> {
+export async function startEnvironment(nodeIds: readonly string[] = NODE_IDS): Promise<GateEnvironment> {
   await ensureFailoverImages()
   const runPrefix = failoverRunPrefix()
-  const certs = await createMtlsCerts(NODE_IDS)
+  const certs = await createMtlsCerts(nodeIds)
   try {
-    return await startEnvironmentResources(runPrefix, certs)
+    return await startEnvironmentResources(runPrefix, certs, nodeIds)
   } catch (err: unknown) {
     certs.cleanup()
     await cleanupRunResources(runPrefix).catch((cleanupErr: unknown) => {
@@ -87,12 +93,16 @@ export async function startEnvironment(): Promise<GateEnvironment> {
   }
 }
 
-async function startEnvironmentResources(runPrefix: string, certs: MtlsCerts): Promise<GateEnvironment> {
+async function startEnvironmentResources(
+  runPrefix: string,
+  certs: MtlsCerts,
+  nodeIds: readonly string[],
+): Promise<GateEnvironment> {
   const etcd = await startEtcdCluster(runPrefix)
-  const grpcPorts = new Map<string, number>(zip(NODE_IDS, await allocatePorts(NODE_IDS.length)))
-  const httpPorts = new Map<string, number>(zip(NODE_IDS, await allocatePorts(NODE_IDS.length)))
-  const etcdProxyPorts = await allocateEtcdProxyPorts()
-  const grpcProxyPorts = await allocateGrpcProxyPorts()
+  const grpcPorts = new Map<string, number>(zip(nodeIds, await allocatePorts(nodeIds.length)))
+  const httpPorts = new Map<string, number>(zip(nodeIds, await allocatePorts(nodeIds.length)))
+  const etcdProxyPorts = await allocateEtcdProxyPorts(nodeIds)
+  const grpcProxyPorts = await allocateGrpcProxyPorts(nodeIds)
   const allProxyPorts = [
     ...Array.from(etcdProxyPorts.values()).flat(),
     ...Array.from(grpcProxyPorts.values()).flatMap(value => Array.from(value.values())),
@@ -104,7 +114,7 @@ async function startEnvironmentResources(runPrefix: string, certs: MtlsCerts): P
     upstreamHost: toxiproxyContainer.upstreamHost,
   })
 
-  for (const nodeId of NODE_IDS) {
+  for (const nodeId of nodeIds) {
     const ports = etcdProxyPorts.get(nodeId)
     if (!ports) throw new Error(`Missing etcd proxy ports for ${nodeId}`)
     for (let index = 0; index < ports.length; index++) {
@@ -117,7 +127,7 @@ async function startEnvironmentResources(runPrefix: string, certs: MtlsCerts): P
     }
   }
 
-  for (const fromNodeId of NODE_IDS) {
+  for (const fromNodeId of nodeIds) {
     const targetPorts = grpcProxyPorts.get(fromNodeId)
     if (!targetPorts) throw new Error(`Missing gRPC proxy ports for ${fromNodeId}`)
     for (const [toNodeId, listenPort] of targetPorts) {
@@ -132,6 +142,7 @@ async function startEnvironmentResources(runPrefix: string, certs: MtlsCerts): P
   const keyPrefix = `${runPrefix}/scenario-0`
   return {
     runPrefix,
+    nodeIds,
     certs,
     etcd,
     toxiproxyContainer,
@@ -186,7 +197,7 @@ export async function startNode(
   const cert = environment.certs.certForNode(nodeId)
   const grpcPort = environment.grpcPorts.get(nodeId)
   if (grpcPort === undefined) throw new Error(`Missing gRPC port for ${nodeId}`)
-  const dialTargets = options.dialTargets ?? NODE_IDS.filter(target => target !== nodeId)
+  const dialTargets = options.dialTargets ?? environment.nodeIds.filter(target => target !== nodeId)
 
   const config: FailoverNodeConfig = {
     nodeId,
@@ -210,6 +221,7 @@ export async function startNode(
     votingDataBearingNodeIds: options.createsGroup ? [...(options.voters ?? NODE_IDS)] : undefined,
     seedSchema: options.seedSchema ?? false,
     sessionTtlMs: options.sessionTtlMs ?? 1_500,
+    maxReplicaLagMs: options.maxReplicaLagMs,
     controllerLeaseTtlMs: options.controllerLeaseTtlMs ?? 1_500,
     controllerTickIntervalMs: options.controllerTickIntervalMs ?? 200,
     controllerEnabled: options.controllerEnabled ?? true,
@@ -217,6 +229,7 @@ export async function startNode(
     initialSync: options.initialSync ?? true,
     backupDirectory: options.backups ? backupDirectoryFor(environment) : undefined,
     dieAfterGroupCreate: options.dieAfterGroupCreate,
+    publishedRelease: options.publishedRelease,
     compatibility: options.compatibility ?? COMPATIBILITY,
   }
 
@@ -248,18 +261,18 @@ export function operatorCoordinator(etcd: EtcdClusterHandle, keyPrefix: string):
   })
 }
 
-async function allocateEtcdProxyPorts(): Promise<Map<string, number[]>> {
+async function allocateEtcdProxyPorts(nodeIds: readonly string[]): Promise<Map<string, number[]>> {
   const result = new Map<string, number[]>()
-  for (const nodeId of NODE_IDS) {
+  for (const nodeId of nodeIds) {
     result.set(nodeId, await allocatePorts(3))
   }
   return result
 }
 
-async function allocateGrpcProxyPorts(): Promise<Map<string, Map<string, number>>> {
+async function allocateGrpcProxyPorts(nodeIds: readonly string[]): Promise<Map<string, Map<string, number>>> {
   const result = new Map<string, Map<string, number>>()
-  for (const fromNodeId of NODE_IDS) {
-    const targets = NODE_IDS.filter(nodeId => nodeId !== fromNodeId)
+  for (const fromNodeId of nodeIds) {
+    const targets = nodeIds.filter(nodeId => nodeId !== fromNodeId)
     const ports = await allocatePorts(targets.length)
     result.set(fromNodeId, new Map(zip(targets, ports)))
   }
@@ -275,7 +288,7 @@ export async function setReplicationLinks(
   environment: GateEnvironment,
   nodeId: string,
   enabled: boolean,
-  peers: readonly string[] = NODE_IDS.filter(otherNodeId => otherNodeId !== nodeId),
+  peers: readonly string[] = environment.nodeIds.filter(otherNodeId => otherNodeId !== nodeId),
 ): Promise<void> {
   for (const otherNodeId of peers) {
     if (otherNodeId === nodeId) continue

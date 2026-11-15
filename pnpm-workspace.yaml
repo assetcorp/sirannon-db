@@ -13,6 +13,10 @@ onlyBuiltDependencies:
 
 minimumReleaseAge: 5760
 
+hoistPattern:
+  - '*'
+  - '!@delali/sirannon-vfs-*'
+
 allowBuilds:
   better-sqlite3: true
   better-sqlite3-multiple-ciphers: false

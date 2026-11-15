@@ -1,10 +1,18 @@
 import type { RegisterNodeSessionInput, ReplicationGroupState } from '../coordinator/types.js'
-import { AuthorityError, CoordinatorError, TopologyError } from '../errors.js'
+import { AuthorityError, CoordinatorError, ProtocolVersionMismatchError, TopologyError } from '../errors.js'
 import type { CoordinatorModeConfig, ReplicationConfig } from '../types.js'
-import { COORDINATOR_ENDPOINTS_REFUSAL, DEFAULT_COORDINATOR_SESSION_TTL_MS, FIRST_PRIMARY_TERM } from './constants.js'
+import { reportPositionForAdmission } from './admission-report.js'
+import {
+  COORDINATOR_ENDPOINTS_REFUSAL,
+  DEFAULT_COORDINATOR_SESSION_TTL_MS,
+  FIRST_PRIMARY_TERM,
+  REPLICA_LAG_CHECK_INTERVAL_MS,
+  SUPPORTED_FEATURE_LEVEL,
+} from './constants.js'
 import { startControllerLoop, stopControllerLeaseWatch } from './controller-loop.js'
 import {
   applyCoordinatorState,
+  errorDetails,
   hasCurrentPrimaryAuthorityFor,
   noteCoordinatorContact,
 } from './coordinator-authority.js'
@@ -17,9 +25,11 @@ import {
 } from './coordinator-membership.js'
 import type { ReplicationEngine } from './engine.js'
 import { keepTermHistoryCurrent } from './history-anchor.js'
+import { removeLaggingReplicas } from './in-sync-lag.js'
 import { applyCoordinatorRestartRules } from './local-membership.js'
 import { refreshMemberAddresses } from './member-addresses.js'
 import { reportEngineError } from './report-error.js'
+import { beginRestartProof, checkRestartProof } from './restart-proof.js'
 import {
   ensurePrimaryTermStart,
   forgetUnheldFirstPrimaryTermStart,
@@ -37,11 +47,13 @@ function localCoordinatorPrimary(engine: ReplicationEngine): { nodeId: string; e
 
 /**
  * Refuses a replication config that coordinator mode cannot run with: one without a stable node ID, and one that
- * configures peer addresses, which coordinator mode takes from the members' sessions.
+ * configures peer addresses, which coordinator mode takes from the members' sessions, and one with a replica lag limit
+ * that is not a positive whole number of milliseconds.
  *
  * @param config - The replication config that the engine receives.
  * @throws AuthorityError when coordinator mode has no `nodeId`.
  * @throws TopologyError when coordinator mode has `transportConfig.endpoints`.
+ * @throws RangeError when `coordinator.maxReplicaLagMs` is not a positive safe integer.
  *
  * @internal
  */
@@ -50,9 +62,25 @@ export function assertCoordinatorModeConfig(config: ReplicationConfig): void {
   if (!config.nodeId) {
     throw new AuthorityError('Coordinator mode requires a stable persisted nodeId')
   }
+  const lagMs = config.coordinator.maxReplicaLagMs
+  if (lagMs !== undefined && (!Number.isSafeInteger(lagMs) || lagMs <= 0)) {
+    throw new RangeError('coordinator.maxReplicaLagMs must be a positive safe integer')
+  }
   if (config.transportConfig?.endpoints !== undefined) {
     throw new TopologyError(COORDINATOR_ENDPOINTS_REFUSAL)
   }
+}
+
+function assertSupportedFeatureLevel(engine: ReplicationEngine, state: ReplicationGroupState): void {
+  if (state.featureLevel <= SUPPORTED_FEATURE_LEVEL) return
+  throw new ProtocolVersionMismatchError(
+    `Replication group '${state.groupId}' runs at feature level ${state.featureLevel}, and this node supports levels up to ${SUPPORTED_FEATURE_LEVEL}`,
+    {
+      ...errorDetails(engine, state),
+      groupFeatureLevel: state.featureLevel,
+      supportedFeatureLevel: SUPPORTED_FEATURE_LEVEL,
+    },
+  )
 }
 
 function sessionRegistration(
@@ -71,6 +99,7 @@ function sessionRegistration(
     dataBearing: true,
     voting: state.votingDataBearingNodeIds.includes(engine.nodeId),
     compatibility: config.compatibility,
+    featureLevel: SUPPORTED_FEATURE_LEVEL,
   }
 }
 
@@ -95,6 +124,7 @@ async function openReplicationGroup(
       primaryTerm: FIRST_PRIMARY_TERM,
       inSyncNodeIds: [engine.nodeId],
       compatibility: config.compatibility,
+      featureLevel: SUPPORTED_FEATURE_LEVEL,
     })
     if (opened.state) {
       if (!opened.created) await forgetUnheldFirstPrimaryTermStart(engine, opened.state)
@@ -111,10 +141,12 @@ export async function startCoordinatorMode(engine: ReplicationEngine): Promise<v
   const coordinator = config.coordinator
   engine.coordinatorDemotionHandler = next => demoteFormerPrimary(engine, next)
   const opened = await openReplicationGroup(engine, config)
+  assertSupportedFeatureLevel(engine, opened.state)
   noteCoordinatorContact(engine)
   engine.coordinatorState = opened.state
   engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, opened.state)
-  const state = opened.created ? opened.state : await applyCoordinatorRestartRules(engine, opened.state)
+  if (!opened.created) await beginRestartProof(engine, await applyCoordinatorRestartRules(engine, opened.state))
+  const state = engine.coordinatorState ?? opened.state
   engine.memberAddresses.noteGroupState(state)
   if (opened.created) {
     await ensurePrimaryTermStart(engine).catch((err: unknown) =>
@@ -151,14 +183,25 @@ function sessionTtlMs(config: CoordinatorModeConfig): number {
 function startInSyncReconcileLoop(engine: ReplicationEngine): void {
   const timer = setInterval(() => {
     keepTermHistoryCurrent(engine)
+    checkRestartProof(engine).catch((err: unknown) => reportEngineError(engine, err, 'restart-proof-check', true))
     reconcileInSyncSet(engine).catch((err: unknown) =>
       reportEngineError(engine, err, 'coordinator-in-sync-reconcile', true),
+    )
+    reportPositionForAdmission(engine).catch((err: unknown) =>
+      reportEngineError(engine, err, 'coordinator-admission-report', true),
     )
     keepRejoinCurrent(engine)
     keepMemberSessionsCurrent(engine)
   }, IN_SYNC_RECONCILE_INTERVAL_MS)
   unrefTimer(timer)
-  engine.inSyncReconcileTimer = timer
+  engine.inSync.reconcileTimer = timer
+  const lagTimer = setInterval(() => {
+    removeLaggingReplicas(engine).catch((err: unknown) =>
+      reportEngineError(engine, err, 'coordinator-lagging-replica-removal', true),
+    )
+  }, REPLICA_LAG_CHECK_INTERVAL_MS)
+  unrefTimer(lagTimer)
+  engine.inSync.lagTimer = lagTimer
 }
 
 function keepMemberSessionsCurrent(engine: ReplicationEngine): void {
@@ -284,9 +327,13 @@ export function stopCoordinatorTimers(engine: ReplicationEngine): void {
     clearInterval(engine.coordinatorLeaseTimer)
     engine.coordinatorLeaseTimer = null
   }
-  if (engine.inSyncReconcileTimer) {
-    clearInterval(engine.inSyncReconcileTimer)
-    engine.inSyncReconcileTimer = null
+  if (engine.inSync.reconcileTimer) {
+    clearInterval(engine.inSync.reconcileTimer)
+    engine.inSync.reconcileTimer = null
+  }
+  if (engine.inSync.lagTimer) {
+    clearInterval(engine.inSync.lagTimer)
+    engine.inSync.lagTimer = null
   }
   if (engine.controller.timer) {
     clearInterval(engine.controller.timer)

@@ -2,6 +2,7 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { ensureAppliedChangesTable } from './applied-changes-table.js'
 import { ensureColumnVersionsTable } from './column-versions-table.js'
 import { ensurePeerStateTable } from './peer-state-table.js'
+import { ensureRolledBackChangesTable } from './rolled-back-changes-table.js'
 import { ensureSyncStateTable } from './sync-state-table.js'
 
 export async function ensureBatchApplyTables(conn: SQLiteConnection): Promise<void> {
@@ -13,4 +14,5 @@ export async function ensureReplicationStateTables(conn: SQLiteConnection): Prom
   await ensurePeerStateTable(conn)
   await ensureBatchApplyTables(conn)
   await ensureSyncStateTable(conn)
+  await ensureRolledBackChangesTable(conn)
 }

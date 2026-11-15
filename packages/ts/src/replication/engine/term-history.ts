@@ -8,6 +8,7 @@ import {
   selectMaxHistoryChangeSeq,
   selectNewestHistoryChange,
   selectPrimaryTermStart,
+  selectSyncMetaRow,
   upsertAnchoredTerm,
   upsertPrimaryTermStart,
 } from '../../core/system-catalog/index.js'
@@ -17,6 +18,7 @@ import type { SyncHistoryPoint, SyncRequest } from '../types.js'
 import { FIRST_PRIMARY_TERM } from './constants.js'
 import { hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
+import { restartLagClock } from './in-sync-lag.js'
 import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
 import { unrefTimer } from './timers.js'
 
@@ -33,17 +35,21 @@ export class ResumeRequest {
   term: bigint | null = null
   /** Holds the time in milliseconds at which this replica sent the pending request, so that it resends a lost one. */
   requestedAt = 0
+  /** Is true when the replica sent the pending request only to find which changes to keep before a full copy. */
+  keepsBeforeCopy = false
 
   /**
    * Records a request that this replica sends now.
    *
    * @param id - The request ID.
    * @param term - The primary term in which the replica sends it.
+   * @param keepsBeforeCopy - True when the replica asks only to find which changes to keep before a full copy.
    */
-  start(id: string, term: bigint): void {
+  start(id: string, term: bigint, keepsBeforeCopy: boolean): void {
     this.id = id
     this.term = term
     this.requestedAt = Date.now()
+    this.keepsBeforeCopy = keepsBeforeCopy
   }
 
   /** Forgets the pending request, so that an answer to it no longer matches. */
@@ -51,6 +57,7 @@ export class ResumeRequest {
     this.id = null
     this.term = null
     this.requestedAt = 0
+    this.keepsBeforeCopy = false
   }
 
   /**
@@ -87,7 +94,7 @@ export class TermHistory {
   active = false
   /** Holds the primary term whose history this node last reconciled its own with, or null before the first time. */
   anchoredTerm: bigint | null = null
-  /** Is true when this node held primary authority in its reconciled term, so that only the former-primary path rejoins it. */
+  /** Is true when this node held primary authority in its reconciled term, so that it reconciles only once the group moves to a later term. */
   heldPrimaryInAnchoredTerm = false
   /** Holds the term whose start this node recorded as primary, or null before it records one. */
   termStartTerm: bigint | null = null
@@ -95,6 +102,8 @@ export class TermHistory {
   termStartSeq = 0n
   /** Is true from the moment this replica asks a new primary where their histories meet until it holds that history. */
   reconciling = false
+  /** Holds the primary term in which this node last kept its unshared changes before a full copy, or null before then. */
+  keptBeforeCopyTerm: bigint | null = null
   /** Holds the pending request in which this replica names its newest history transaction. */
   readonly resumeRequest = new ResumeRequest()
   /** Holds the term-start recording in progress, so that concurrent callers wait for one recording. */
@@ -175,7 +184,9 @@ export async function forgetUnheldFirstPrimaryTermStart(
  * Loads the reconciled primary term from the database into the engine. When a node holds no recorded term, the engine
  * takes the current term if the node holds a complete copy, as a node that an earlier release wrote does, or if the
  * node starts with `initialSync` set to false, because the operator seeded its rows. An upgrade or a seeded start
- * therefore reconciles nothing, and the node reconciles its history at the next change of primary.
+ * therefore reconciles nothing, and the node reconciles its history at the next change of primary. A node whose file
+ * records the start of a primary term but no sync at all held primary duty under an earlier release, so the engine
+ * records a completed sync for it, and the node keeps its rows and skips a second copy.
  *
  * @param engine - The engine to load into.
  *
@@ -184,6 +195,9 @@ export async function forgetUnheldFirstPrimaryTermStart(
 export async function loadTermHistory(engine: ReplicationEngine): Promise<void> {
   if (!engine.isCoordinatorMode()) return
   const conn = engine.writerConn
+  if ((await selectSyncMetaRow(conn)) === null && (await selectPrimaryTermStart(conn)) !== null) {
+    await engine.log.setSyncMeta('ready')
+  }
   const anchoredTerm = await selectAnchoredTerm(conn)
   if (anchoredTerm !== null) {
     const termStart = await selectPrimaryTermStart(conn)
@@ -203,12 +217,14 @@ export async function loadTermHistory(engine: ReplicationEngine): Promise<void> 
  *
  * The recording resets every peer's progress, because a replica's acknowledgements from an earlier term count
  * positions in another node's log. It also raises the group's durability point to the newest history position in this
- * node's log, so that the node admits no replica to the in-sync set before the replica holds that history. Last, the
- * node records the term as the one whose history it holds, so that it reconciles its history with the next primary's
- * once it loses authority.
+ * node's log, so that the node admits no replica to the in-sync set before the replica holds that history. The node
+ * also records that its file holds a complete copy, because its history is the group's, so that it keeps its rows
+ * when it restarts as a replica. Last, the node records the term as the one whose history it holds, so that it
+ * reconciles its history with the next primary's once it loses authority.
  *
  * A primary that the group shows as repairing or faulted records nothing, because its file may lack acknowledged
- * writes, and a term start that it recorded would let it keep primary duty when it restarts.
+ * writes, and a term start that it recorded would let it keep primary duty when it restarts. A restarted primary that
+ * still waits to prove that it lost no acknowledged write records nothing either, until it holds a new term.
  *
  * @param engine - The engine of the node that holds primary authority.
  * @returns A promise that settles once the term start is recorded, or at once when this node is not primary or the
@@ -219,7 +235,7 @@ export async function loadTermHistory(engine: ReplicationEngine): Promise<void> 
 export function ensurePrimaryTermStart(engine: ReplicationEngine): Promise<void> {
   const state = engine.coordinatorState
   const history = engine.history
-  if (!state || !hasCurrentPrimaryAuthorityFor(engine, state)) return Promise.resolve()
+  if (!state || !hasCurrentPrimaryAuthorityFor(engine, state) || engine.inSync.restartProof) return Promise.resolve()
   if (state.repairingNodeIds.includes(engine.nodeId) || state.faultedNodeIds.includes(engine.nodeId)) {
     return Promise.resolve()
   }
@@ -245,11 +261,15 @@ async function recordPrimaryTermStart(engine: ReplicationEngine, state: Replicat
     engine.peerTracker.restartProgress(seq)
     await upsertPrimaryTermStart(conn, { term, seq })
   }
+  if (!(await engine.log.isSyncCompleted())) await engine.log.setSyncMeta('ready')
   if (!(await raiseDurabilityPoint(engine, term, seq))) return
   await upsertAnchoredTerm(conn, term)
   engine.history.anchoredTerm = term
   engine.history.heldPrimaryInAnchoredTerm = true
   engine.history.termStartSeq = seq
+  engine.inSync.acknowledgedSeq = seq
+  engine.inSync.pendingAdmissions.clear()
+  restartLagClock(engine)
   engine.history.termStartTerm = term
 }
 

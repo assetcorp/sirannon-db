@@ -30,6 +30,7 @@ import type {
   CreateReplicationGroupStateResult,
   NodeSessionWatcher,
   PromoteEligibleReplicaInput,
+  RaiseFeatureLevelInput,
   RegisterNodeSessionInput,
   RemoveVoterInput,
   ReplicationGroupState,
@@ -229,6 +230,12 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   async removeVoter(input: RemoveVoterInput): Promise<VoterChangeResult> {
     const { groups } = await this.connect()
     return groups.removeVoter(input)
+  }
+
+  /** Raises the group's feature level, while every member holds a live session that supports the new level. */
+  async raiseFeatureLevel(input: RaiseFeatureLevelInput): Promise<ReplicationGroupState | null> {
+    const { groups } = await this.connect()
+    return groups.raiseFeatureLevel(input)
   }
 
   /** Returns the group's state, or null when etcd has no state for the group. */

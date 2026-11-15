@@ -19,6 +19,9 @@ on:
 permissions:
   contents: read
 
+env:
+  SIRANNON_REQUIRE_STREAMING_EXTENSION: '1'
+
 jobs:
   scope:
     name: Decide whether this change needs the streamed backup checks
@@ -245,6 +248,6 @@ jobs:
 
       - name: Run the streamed backup suite on Node's own SQLite inside Alpine
         run: >-
-          docker run --rm -v "$PWD:/work" -w /work node:24-alpine sh -euc
+          docker run --rm -e SIRANNON_REQUIRE_STREAMING_EXTENSION=1 -v "$PWD:/work" -w /work node:24-alpine sh -euc
           'corepack enable pnpm && pnpm install --frozen-lockfile --ignore-scripts &&
           cd packages/ts && pnpm vitest run src/__tests__/integration/backups/streamed-node-sqlite'

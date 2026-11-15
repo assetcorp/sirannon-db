@@ -260,6 +260,8 @@ function cancelRebuildForClearedRepairFlag(engine: ReplicationEngine): void {
   const rejoin = engine.rejoin
   if (!rejoin.rebuildingForRepairFlag || !servesItsData(engine.syncState.phase)) return
   rejoin.rebuildingForRepairFlag = false
+  rejoin.repairGeneration++
+  engine.history.keptBeforeCopyTerm = null
   if (engine.history.resumeRequest.keepsBeforeCopy) engine.history.resumeRequest.clear()
 }
 
@@ -289,7 +291,11 @@ export function startCoordinatorRejoinSyncIfReady(engine: ReplicationEngine, sta
 
   rejoin.syncStarting = true
   const servingItsData = servesItsData(engine.syncState.phase)
-  if (servingItsData) rejoin.rebuildingForRepairFlag = true
+  if (servingItsData && !rejoin.rebuildingForRepairFlag) {
+    rejoin.rebuildingForRepairFlag = true
+    rejoin.repairGeneration++
+    engine.history.keptBeforeCopyTerm = null
+  }
   const rebuild = servingItsData ? restartWithFullCopy(engine) : engine.syncJoiner.initiateSync()
   rebuild
     .catch((err: unknown) => reportEngineError(engine, err, 'coordinator-rejoin-sync', true))

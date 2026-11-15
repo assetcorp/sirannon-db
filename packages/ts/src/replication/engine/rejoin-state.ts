@@ -13,6 +13,8 @@ export class RejoinState {
    * covers that rebuild, so the node writes no repairing flag of its own over an operator's later change to it.
    */
   rebuildingForRepairFlag = false
+  /** Identifies the current repair request, so that a cancelled request cannot start a later copy. */
+  repairGeneration = 0
   /** Holds the primary term in which this node finished the full copy that rejoins it, or null before it finishes one. */
   copiedTerm: bigint | null = null
   /** Is true while this node asks the coordinator to admit it after that copy, so that it sends one request at a time. */

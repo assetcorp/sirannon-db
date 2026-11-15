@@ -9,6 +9,7 @@ import { ReplicationEngine } from '../../../replication/engine.js'
 import { PrimaryReplicaTopology } from '../../../replication/topology/primary-replica.js'
 import type { ReplicationConfig, ReplicationErrorEvent } from '../../../replication/types.js'
 import { GrpcReplicationTransport } from '../../../transport/grpc/index.js'
+import type { GrpcReplicationOptions } from '../../../transport/grpc/options.js'
 import { testDriver } from '../../helpers/test-driver.js'
 import type { MtlsCerts } from './certs.js'
 
@@ -45,6 +46,7 @@ export interface CreatePrimaryArgs {
   listenPort?: number
   storage?: NodeStorage
   registry?: NodeRegistry
+  transportOptions?: GrpcReplicationOptions
 }
 
 export interface CreateReplicaArgs {
@@ -55,6 +57,7 @@ export interface CreateReplicaArgs {
   configOverrides?: Partial<ReplicationConfig>
   storage?: NodeStorage
   registry?: NodeRegistry
+  transportOptions?: GrpcReplicationOptions
 }
 
 function driverOf(registry: NodeRegistry | undefined): SQLiteDriver {
@@ -126,6 +129,7 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,
+    ...args.transportOptions,
   })
 
   const config: ReplicationConfig = {
@@ -181,6 +185,7 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,
+    ...args.transportOptions,
   })
 
   const config: ReplicationConfig = {

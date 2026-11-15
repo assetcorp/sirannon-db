@@ -35,7 +35,12 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
   if (!claimEndpoint(t, endpoint)) return
 
   const channelCreds = buildChannelCreds(t.options)
-  const clientOpts: Partial<ClientOptions> = {}
+  const clientOpts: Partial<ClientOptions> = {
+    'grpc.keepalive_time_ms': t.timing.keepaliveIntervalMs,
+    'grpc.keepalive_timeout_ms': t.timing.keepaliveTimeoutMs,
+    'grpc.keepalive_permit_without_calls': 1,
+    'grpc.use_local_subchannel_pool': 1,
+  }
   const client = new ReplicationClient(endpoint, channelCreds, clientOpts)
 
   const replicateStream = client.replicate()
@@ -50,10 +55,13 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
   let replicatePeerId: string | null = null
   let syncPeerId: string | null = null
   let closed = false
+  let helloDeadline: ReturnType<typeof setTimeout> | null = null
 
   const teardown = (): void => {
     if (closed) return
     closed = true
+    if (helloDeadline !== null) clearTimeout(helloDeadline)
+    helloDeadline = null
     releaseEndpoint(t, endpoint)
 
     const peerId = replicatePeerId ?? syncPeerId
@@ -80,6 +88,13 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
     teardown()
   }
 
+  const settleHelloDeadline = (): void => {
+    if (replicatePeerId === null || syncPeerId === null || helloDeadline === null) return
+    clearTimeout(helloDeadline)
+    helloDeadline = null
+  }
+
+  helloDeadline = setTimeout(teardown, t.timing.helloTimeoutMs)
   const hello = localHello(t)
   replicateStream.write({ hello })
   syncStream.write({ hello })
@@ -94,6 +109,7 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
       const peerRole = msg.hello.role as TopologyRole
       t.clientPeerStreams.set(replicatePeerId, entry)
       noteEndpointReachable(t, endpoint)
+      settleHelloDeadline()
       registerPeer(t.connectedPeers, t.peerConnectedHandler, replicatePeerId, peerRole, peerHelloFields(msg.hello))
       return
     }
@@ -116,6 +132,7 @@ export function connectToEndpoint(t: GrpcReplicationTransport, endpoint: string)
         return
       }
       syncPeerId = msg.hello.nodeId
+      settleHelloDeadline()
       return
     }
 

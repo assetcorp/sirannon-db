@@ -97,15 +97,38 @@ function acceptsHello<T extends { hello?: Hello }>(
   return true
 }
 
+interface HelloAwaitingStream extends RefusableStream {
+  on(event: 'end' | 'error' | 'cancelled', listener: () => void): unknown
+}
+
+function awaitFirstMessage(t: GrpcReplicationTransport, call: HelloAwaitingStream): () => void {
+  const timeoutMs = t.timing.helloTimeoutMs
+  let deadline: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    deadline = null
+    refuseStream(call, status.DEADLINE_EXCEEDED, `No Hello arrived within ${timeoutMs}ms`)
+  }, timeoutMs)
+  const settle = (): void => {
+    if (deadline === null) return
+    clearTimeout(deadline)
+    deadline = null
+  }
+  call.on('end', settle)
+  call.on('error', settle)
+  call.on('cancelled', settle)
+  return settle
+}
+
 export function handleServerReplicateStream(
   t: GrpcReplicationTransport,
   call: ServerDuplexStream<ReplicationMessage, ReplicationMessage>,
 ): void {
   let peerId: string | null = null
   let helloSent = false
+  const firstMessageArrived = awaitFirstMessage(t, call)
 
   call.on('data', (msg: ReplicationMessage) => {
     if (peerId === null) {
+      firstMessageArrived()
       if (!acceptsHello(t, call, msg)) return
 
       peerId = msg.hello.nodeId
@@ -171,9 +194,11 @@ export function handleServerSyncStream(
 ): void {
   let peerId: string | null = null
   let helloSent = false
+  const firstMessageArrived = awaitFirstMessage(t, call)
 
   call.on('data', (msg: SyncMessage) => {
     if (peerId === null) {
+      firstMessageArrived()
       if (!acceptsHello(t, call, msg)) return
 
       peerId = msg.hello.nodeId

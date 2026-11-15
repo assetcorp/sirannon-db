@@ -14,6 +14,8 @@ export interface FaultProxy {
   resume(): void
   cut(): void
   refuse(refusing: boolean): void
+  swallow(connections: number): void
+  silence(): void
   retarget(port: number): void
   close(): Promise<void>
 }
@@ -81,6 +83,7 @@ interface Pairing {
   target: net.Socket
   toTarget: Lane
   toClient: Lane
+  silenced: boolean
 }
 
 export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.1'): Promise<FaultProxy> {
@@ -89,6 +92,8 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
   let currentTarget = targetPort
   let stalled = false
   let refusing = false
+  let swallowing = 0
+  const swallowed = new Set<net.Socket>()
   let opened = 0
   let closed = 0
   let bytesToTarget = 0
@@ -100,6 +105,13 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
     if (refusing) {
       closed += 1
       client.destroy()
+      return
+    }
+    if (swallowing > 0) {
+      swallowing -= 1
+      swallowed.add(client)
+      client.on('close', () => swallowed.delete(client))
+      client.resume()
       return
     }
 
@@ -117,9 +129,10 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
     const pairing: Pairing = {
       client,
       target,
+      silenced: false,
       toTarget: new Lane(
         target,
-        () => stalled,
+        () => stalled || pairing.silenced,
         () => delays['to-target'],
         bytes => {
           bytesToTarget += bytes
@@ -127,7 +140,7 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
       ),
       toClient: new Lane(
         client,
-        () => stalled,
+        () => stalled || pairing.silenced,
         () => delays['to-client'],
         bytes => {
           bytesToClient += bytes
@@ -182,11 +195,18 @@ export async function startFaultProxy(targetPort: number, targetHost = '127.0.0.
     refuse(value) {
       refusing = value
     },
+    swallow(connections) {
+      swallowing = connections
+    },
+    silence() {
+      for (const pairing of pairings) pairing.silenced = true
+    },
     retarget(port) {
       currentTarget = port
     },
     async close() {
       refusing = true
+      for (const client of [...swallowed]) client.destroy()
       for (const pairing of [...pairings]) {
         pairing.client.destroy()
         pairing.target.destroy()

@@ -7,6 +7,7 @@ import type { SirannonOptions } from '../../../core/types.js'
 import { betterSqlite3 } from '../../../drivers/better-sqlite3/index.js'
 import type { ReplicationConfig, ReplicationErrorEvent } from '../../../replication/index.js'
 import type { GrpcReplicationTransport } from '../../../transport/grpc/index.js'
+import type { GrpcReplicationOptions } from '../../../transport/grpc/options.js'
 import type { MtlsCerts } from './certs.js'
 import { createPrimary, createReplica, type ManagedNode, type NodeStorage, stopNode } from './factory.js'
 import { type FaultProxy, startFaultProxy } from './fault-proxy.js'
@@ -28,6 +29,7 @@ export interface PrimaryOptions {
   registryOptions?: Partial<SirannonOptions>
   encryptionKey?: Uint8Array
   initialize?: (conn: SQLiteConnection, tracker: ChangeTracker) => Promise<void>
+  transportOptions?: GrpcReplicationOptions
 }
 
 export interface ReplicaOptions {
@@ -37,6 +39,7 @@ export interface ReplicaOptions {
   driver?: SQLiteDriver
   registryOptions?: Partial<SirannonOptions>
   encryptionKey?: Uint8Array
+  transportOptions?: GrpcReplicationOptions
 }
 
 export async function eventually(
@@ -131,6 +134,7 @@ export class ReplicationScene {
       storage: options.storage,
       listenPort: options.listenPort,
       configOverrides: options.config,
+      transportOptions: options.transportOptions,
       registry: { sirannon, driver, databaseId: nodeId, encryptionKey: options.encryptionKey },
       initialize: async (conn, tracker) => {
         for (const statement of options.schema ?? []) await conn.exec(statement)
@@ -152,6 +156,7 @@ export class ReplicationScene {
       primaryPort: options.port,
       storage: options.storage,
       configOverrides: options.config,
+      transportOptions: options.transportOptions,
       registry: { sirannon, driver, databaseId: nodeId, encryptionKey: options.encryptionKey },
     })
     this.adopt(node)

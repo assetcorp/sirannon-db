@@ -32,6 +32,21 @@ export interface GrpcReplicationOptions {
    * Sets how many milliseconds a replica waits for a forwarded write before it fails the write. Defaults to 30000.
    */
   forwardDeadlineMs?: number
+  /**
+   * Sets how many milliseconds each side of a replication stream waits for the other side's Hello. A client that waits
+   * longer closes the connection and dials again, and a server ends the stream. Defaults to 10000.
+   */
+  helloTimeoutMs?: number
+  /**
+   * Sets how many milliseconds pass between the keepalive pings that this node sends on each connection that it dials,
+   * so that it finds a connection that has gone silent. Defaults to 10000, and the shortest interval it accepts is 1000.
+   */
+  keepaliveIntervalMs?: number
+  /**
+   * Sets how many milliseconds this node waits for the answer to a keepalive ping before it treats the connection as
+   * lost and dials again. Defaults to 10000.
+   */
+  keepaliveTimeoutMs?: number
 }
 
 export const DEFAULT_FORWARD_DEADLINE_MS = 30_000

@@ -25,9 +25,10 @@ import {
   toSyncCompletePayload,
   toSyncRequestPayload,
 } from './codec.js'
+import { type ConnectionTiming, resolveConnectionTiming } from './connection-timing.js'
 import type { ReplicationMessage, SyncMessage } from './generated/replication.js'
 import { type GrpcRuntime, loadGrpcRuntime } from './loader.js'
-import { DEFAULT_FORWARD_DEADLINE_MS, type GrpcReplicationOptions, SERVICE_NAME } from './options.js'
+import { type GrpcReplicationOptions, SERVICE_NAME } from './options.js'
 import { peerCertificateCommonName } from './peer-identity.js'
 import {
   type AckHandler,
@@ -107,8 +108,20 @@ export class GrpcReplicationTransport implements ReplicationTransport {
   private runtime: GrpcRuntime | null = null
   private peerEndpoints: ReadonlyMap<string, string> | null = null
 
+  /** @internal */
+  readonly timing: ConnectionTiming
+
+  /**
+   * Creates a transport that uses these options once it connects.
+   *
+   * @param options - The address, certificates, deadlines, and keepalive intervals of the transport.
+   * @throws A `TRANSPORT_ERROR` when `forwardDeadlineMs`, `helloTimeoutMs`, `keepaliveIntervalMs`, or
+   * `keepaliveTimeoutMs` is not a whole number of milliseconds that a timer holds, or when `keepaliveIntervalMs` is
+   * shorter than 1,000.
+   */
   constructor(options: GrpcReplicationOptions = {}) {
     this.options = options
+    this.timing = resolveConnectionTiming(options)
   }
 
   /**
@@ -252,11 +265,7 @@ export class GrpcReplicationTransport implements ReplicationTransport {
     if (!clientEntry || !this.runtime) {
       throw new TransportError(`Peer '${peerId}' is not connected`)
     }
-    return this.runtime.forwardOverRpc(
-      clientEntry,
-      request,
-      this.options.forwardDeadlineMs ?? DEFAULT_FORWARD_DEADLINE_MS,
-    )
+    return this.runtime.forwardOverRpc(clientEntry, request, this.timing.forwardDeadlineMs)
   }
 
   /** Asks a peer to stream a full copy of the database. */

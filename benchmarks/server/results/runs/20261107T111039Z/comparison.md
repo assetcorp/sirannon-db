@@ -114,52 +114,52 @@ _Each client decides how many network round trips one operation takes. The Siran
 
 ### Operating points at each in-flight limit
 
-_Each cell gives the operating point that an engine reached with at most that many requests in flight, with its p99 in brackets. An engine's peak limit is the one where its operating point was highest after one measurement at each rate. The harness measured every rate again at that limit, so the cell at the peak limit rests on every repetition, while the engine's other cells rest on one measurement. A † marks a cell where the engine's p99 exceeded the target at every offered rate._
+_Each cell gives the operating point that an engine reached with at most that many requests in flight, with its p99 in brackets. An engine's peak limit is the one where its operating point was highest after one measurement at each rate. The harness measured every rate again at that limit, so the cell at the peak limit rests on every repetition, while the engine's other cells rest on one measurement. A † marks a cell where the engine's p99 exceeded the target at every offered rate. Bold marks the higher of the two operating points on each workload at each in-flight limit, counting only the engines that held the target. Where both engines held the target at the same rate, neither cell is bold._
 
 #### Full durability (fsync every commit)
 
 | Workload | Engine | 16 in flight | 64 in flight | 256 in flight | Peak limit |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Point-select | Sirannon | 64.0K (5.432 ms) | 64.0K (4.901 ms) | 64.0K (6.463 ms) | 256 |
+| Point-select | Sirannon | **64.0K** (5.432 ms) | **64.0K** (4.901 ms) | **64.0K** (6.463 ms) | 256 |
 | Point-select | PostgreSQL | 48.0K (6.213 ms) | 32.0K (3.017 ms) | 32.0K (2.819 ms) | 16 |
 | Single-row insert | Sirannon | 8.0K (9.520 ms) | 24.0K (14.928 ms) | 32.0K (19.000 ms) | 256 |
-| Single-row insert | PostgreSQL | 16.0K (20.888 ms) | 32.0K (14.566 ms) | 32.0K (5.304 ms) | 64 |
-| Single-row update | Sirannon | 8.0K (8.156 ms) | 32.0K (8.130 ms) | 48.0K (9.626 ms) | 256 |
+| Single-row insert | PostgreSQL | **16.0K** (20.888 ms) | **32.0K** (14.566 ms) | 32.0K (5.304 ms) | 64 |
+| Single-row update | Sirannon | 8.0K (8.156 ms) | **32.0K** (8.130 ms) | **48.0K** (9.626 ms) | 256 |
 | Single-row update | PostgreSQL | 8.0K (4.771 ms) | 24.0K (4.686 ms) | 24.0K (7.726 ms) | 64 |
-| YCSB-A (50/50 read/update) | Sirannon | 8.0K (9.251 ms) | 24.0K (5.096 ms) | 24.0K (5.343 ms) | 64 |
+| YCSB-A (50/50 read/update) | Sirannon | **8.0K** (9.251 ms) | **24.0K** (5.096 ms) | **24.0K** (5.343 ms) | 64 |
 | YCSB-A (50/50 read/update) | PostgreSQL | 32.0K (511 ms) † | 32.0K (463 ms) † | 24.0K (262 ms) † | 16 |
-| YCSB-B (95/5 read/update) | Sirannon | 1.0K (1.849 ms) | 32.0K (4.970 ms) | 16.0K (3.037 ms) | 64 |
+| YCSB-B (95/5 read/update) | Sirannon | 1.0K (1.849 ms) | 32.0K (4.970 ms) | **16.0K** (3.037 ms) | 64 |
 | YCSB-B (95/5 read/update) | PostgreSQL | 1.0K (1.920 ms) | 32.0K (6.972 ms) | 1.0K (1.749 ms) | 64 |
-| YCSB-C (read-only) | Sirannon | 8.0K (4.916 ms) | 24.0K (3.905 ms) | 32.0K (5.204 ms) | 256 |
-| YCSB-C (read-only) | PostgreSQL | 32.0K (5.945 ms) | 24.0K (4.186 ms) | 8.0K (2.267 ms) | 16 |
-| YCSB-F (read-modify-write) | Sirannon | 1.0K (2.422 ms) | 16.0K (5.398 ms) | 24.0K (7.704 ms) | 256 |
-| YCSB-F (read-modify-write) | PostgreSQL | 16.0K (460 ms) † | 24.0K (7.357 ms) | 24.0K (299 ms) † | 64 |
-| TPC-C-derived | Sirannon | 8.0K (9.182 ms) | 24.0K (11.892 ms) | 32.0K (14.282 ms) | 256 |
+| YCSB-C (read-only) | Sirannon | 8.0K (4.916 ms) | 24.0K (3.905 ms) | **32.0K** (5.204 ms) | 256 |
+| YCSB-C (read-only) | PostgreSQL | **32.0K** (5.945 ms) | 24.0K (4.186 ms) | 8.0K (2.267 ms) | 16 |
+| YCSB-F (read-modify-write) | Sirannon | **1.0K** (2.422 ms) | 16.0K (5.398 ms) | **24.0K** (7.704 ms) | 256 |
+| YCSB-F (read-modify-write) | PostgreSQL | 16.0K (460 ms) † | **24.0K** (7.357 ms) | 24.0K (299 ms) † | 64 |
+| TPC-C-derived | Sirannon | 8.0K (9.182 ms) | **24.0K** (11.892 ms) | **32.0K** (14.282 ms) | 256 |
 | TPC-C-derived | PostgreSQL | 8.0K (6.188 ms) | 16.0K (4.517 ms) | 16.0K (4.437 ms) | 64 |
-| TPC-C new-order transaction | Sirannon | 8.0K (8.329 ms) | 8.0K (8.430 ms) | 16.0K (16.984 ms) | 256 |
+| TPC-C new-order transaction | Sirannon | **8.0K** (8.329 ms) | **8.0K** (8.430 ms) | **16.0K** (16.984 ms) | 256 |
 | TPC-C new-order transaction | PostgreSQL | 6.2K ‡ (15.996 ms) | 8.0K (377 ms) † | 1.0K (15.377 ms) | 16 |
 
 #### Matched-relaxed (deferred fsync)
 
 | Workload | Engine | 16 in flight | 64 in flight | 256 in flight | Peak limit |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Point-select | Sirannon | 64.0K (5.646 ms) | 64.0K (4.072 ms) | 64.0K (6.418 ms) | 64 |
+| Point-select | Sirannon | **64.0K** (5.646 ms) | **64.0K** (4.072 ms) | **64.0K** (6.418 ms) | 64 |
 | Point-select | PostgreSQL | 24.0K (2.133 ms) | 32.0K (2.951 ms) | 32.0K (2.739 ms) | 256 |
 | Single-row insert | Sirannon | 16.0K (15.598 ms) | 24.0K (18.093 ms) | 24.0K (18.485 ms) | 64 |
-| Single-row insert | PostgreSQL | 48.0K (6.262 ms) | 48.0K (7.364 ms) | 32.0K (3.202 ms) | 16 |
-| Single-row update | Sirannon | 32.0K (11.240 ms) | 48.0K (10.976 ms) | 48.0K (12.877 ms) | 256 |
+| Single-row insert | PostgreSQL | **48.0K** (6.262 ms) | **48.0K** (7.364 ms) | **32.0K** (3.202 ms) | 16 |
+| Single-row update | Sirannon | **32.0K** (11.240 ms) | 48.0K (10.976 ms) | 48.0K (12.877 ms) | 256 |
 | Single-row update | PostgreSQL | 8.0K (1.841 ms) | 48.0K (2.999 ms) | 48.0K (5.400 ms) | 64 |
 | YCSB-A (50/50 read/update) | Sirannon | 8.0K (12.326 ms) | 16.0K (9.093 ms) | 24.0K (17.928 ms) | 256 |
-| YCSB-A (50/50 read/update) | PostgreSQL | 16.0K (2.720 ms) | 16.0K (21.402 ms) | 32.0K (5.830 ms) | 256 |
-| YCSB-B (95/5 read/update) | Sirannon | 1.0K (2.046 ms) | 48.0K (7.172 ms) | 16.0K (3.091 ms) | 64 |
-| YCSB-B (95/5 read/update) | PostgreSQL | 32.0K (5.249 ms) | 8.0K (1.966 ms) | 8.0K (2.626 ms) | 16 |
-| YCSB-C (read-only) | Sirannon | 1.0K (1.904 ms) | 24.0K (4.209 ms) | 48.0K (8.052 ms) | 256 |
-| YCSB-C (read-only) | PostgreSQL | 32.0K (2.396 ms) | 24.0K (8.323 ms) | 8.0K (2.290 ms) | 16 |
-| YCSB-F (read-modify-write) | Sirannon | 1.0K (2.197 ms) | 8.0K (16.789 ms) | 32.0K (14.637 ms) | 256 |
-| YCSB-F (read-modify-write) | PostgreSQL | 1.0K (1.960 ms) | 24.0K (5.534 ms) | 8.0K (9.668 ms) | 64 |
+| YCSB-A (50/50 read/update) | PostgreSQL | **16.0K** (2.720 ms) | 16.0K (21.402 ms) | **32.0K** (5.830 ms) | 256 |
+| YCSB-B (95/5 read/update) | Sirannon | 1.0K (2.046 ms) | **48.0K** (7.172 ms) | **16.0K** (3.091 ms) | 64 |
+| YCSB-B (95/5 read/update) | PostgreSQL | **32.0K** (5.249 ms) | 8.0K (1.966 ms) | 8.0K (2.626 ms) | 16 |
+| YCSB-C (read-only) | Sirannon | 1.0K (1.904 ms) | 24.0K (4.209 ms) | **48.0K** (8.052 ms) | 256 |
+| YCSB-C (read-only) | PostgreSQL | **32.0K** (2.396 ms) | 24.0K (8.323 ms) | 8.0K (2.290 ms) | 16 |
+| YCSB-F (read-modify-write) | Sirannon | 1.0K (2.197 ms) | 8.0K (16.789 ms) | **32.0K** (14.637 ms) | 256 |
+| YCSB-F (read-modify-write) | PostgreSQL | 1.0K (1.960 ms) | **24.0K** (5.534 ms) | 8.0K (9.668 ms) | 64 |
 | TPC-C-derived | Sirannon | 16.0K (19.749 ms) | 16.0K (17.817 ms) | 8.0K (16.649 ms) | 64 |
-| TPC-C-derived | PostgreSQL | 16.0K (3.019 ms) | 32.0K (20.980 ms) | 32.0K (3.316 ms) | 256 |
-| TPC-C new-order transaction | Sirannon | 8.0K (12.880 ms) | 16.0K (14.080 ms) | 16.0K (18.522 ms) | 256 |
+| TPC-C-derived | PostgreSQL | 16.0K (3.019 ms) | **32.0K** (20.980 ms) | **32.0K** (3.316 ms) | 256 |
+| TPC-C new-order transaction | Sirannon | **8.0K** (12.880 ms) | **16.0K** (14.080 ms) | **16.0K** (18.522 ms) | 256 |
 | TPC-C new-order transaction | PostgreSQL | 7.1K ‡ (6.359 ms) | 1.0K (2.089 ms) | 1.0K (2.251 ms) | 16 |
 
 _A ‡ marks a rate that is not on the list of target rates. The harness found it by halving a wide gap in that list at the engine's peak in-flight limit, and it measured that rate as many times as each listed rate._

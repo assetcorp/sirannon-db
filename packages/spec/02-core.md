@@ -73,6 +73,7 @@ Database {
   executeTransaction(statements, options?): async -> List<ExecuteResult>
   transaction<T>(fn: (tx: Transaction) -> async T): async -> T
   bulkLoad(sql, paramsBatch, options?): async -> BulkLoadResult
+  checkpoint(): async -> CheckpointResult
 
   applyChanges(batch, resolver?): async -> ApplyResult     -- see 08-device-sync.md
   deviceSync(): DeviceSyncPort                              -- see 08-device-sync.md
@@ -131,6 +132,7 @@ Params        = Map<string, any> or List<any>
 - **executeTransaction** runs a fixed list of statements atomically, sharing a group commit when every statement is groupable.
 - **transaction** runs `fn` inside one writer transaction, committing on success and rolling back on failure. Once `fn` returns or throws, every call on its `Transaction` fails with `TRANSACTION_CLOSED`. Where the runtime can tell the calls that `fn` makes apart from other callers, a write that `fn` makes through the database joins the transaction inside a savepoint of its own. Where it cannot, every call through the database that needs the writer must fail at once with `WRITER_HELD_BY_CALLBACK` while `fn` holds the writer, whoever makes the call, so that a call that `fn` awaits never waits for `fn` to end.
 - **bulkLoad** loads many rows at relaxed durability; see [Bulk Load](#bulk-load).
+- **checkpoint** copies the write-ahead log into the database file and reports whether a reader stopped it; see [Checkpoint](#checkpoint).
 - **watch** installs CDC triggers on the table and starts the poll loop. **unwatch** removes them and stops polling once no table is watched. **on** returns a subscription builder; a subscription receives events only for tables that are watched.
 - **watch**, **unwatch**, and **on** match the table name against the schema in any ASCII letter case, as SQLite does, and the triggers record each change under the name that the schema stores. `watch` must fail with `CDC_ERROR` when the name matches no ordinary table, so a view and a virtual table both fail.
 - **live** returns a query result that change events keep current; see [Live Queries](#live-queries).
@@ -199,7 +201,7 @@ Before binding, omitted parameters become an empty list, a list passes through, 
 
 ### Reserved Identifiers
 
-The query API must reject any statement that reaches Sirannon's internal tables. An identifier beginning with `_sirannon` is reserved, and a read or write against it must fail with `FORBIDDEN_SQL`. The `sqlite_` catalogue is readable, and a statement that modifies it must fail with the same code. The write verbs for the catalogue rule are `insert`, `update`, `delete`, `replace`, `create`, `alter`, `drop`, `vacuum`, and `reindex`. An `ATTACH` or `DETACH` statement and a `VACUUM` statement with an `INTO` clause must fail with that code too, as must a `PRAGMA` statement on `writable_schema`, `temp_store_directory`, or `data_store_directory`, whether it spells the pragma's name bare, quoted, or as a string. The query API must apply each of these rules to the statement that follows an `EXPLAIN` or `EXPLAIN QUERY PLAN` prefix, and it must skip a leading byte-order mark before it reads the first word. Internal connections bypass this guard, so that change tracking, migrations, and replication continue to maintain their own tables.
+The query API must reject any statement that reaches Sirannon's internal tables. An identifier beginning with `_sirannon` is reserved, and a read or write against it must fail with `FORBIDDEN_SQL`. The `sqlite_` catalogue is readable, and a statement that modifies it must fail with the same code. The write verbs for the catalogue rule are `insert`, `update`, `delete`, `replace`, `create`, `alter`, `drop`, `vacuum`, and `reindex`. An `ATTACH` or `DETACH` statement and a `VACUUM` statement with an `INTO` clause must fail with that code too, as must a `PRAGMA` statement on `writable_schema`, `temp_store_directory`, `data_store_directory`, or `wal_checkpoint`, whether it spells the pragma's name bare, quoted, or as a string. The message for `wal_checkpoint` must point the caller to [`checkpoint`](#checkpoint), because a checkpoint on a reader connection can restart a backup copy from page one, and on a database with `backups` any checkpoint outside the cycle can empty the log before the cycle captures it. The query API must apply each of these rules to the statement that follows an `EXPLAIN` or `EXPLAIN QUERY PLAN` prefix, and it must skip a leading byte-order mark before it reads the first word. Internal connections bypass this guard, so that change tracking, migrations, and replication continue to maintain their own tables.
 
 ---
 
@@ -495,6 +497,27 @@ BulkLoadResult { rowsLoaded: number, changes: number }
 ```
 
 `bulkLoad` relaxes `PRAGMA synchronous` to the chosen durability, loads the rows in one transaction, then always restores the configured durability level, on success and on failure. An invalid durability fails with `INVALID_DURABILITY`; a failure to restore after a committed load fails with `DURABILITY_RESTORE_FAILED`. After any failed restore, the writer must restore the configured level before it runs further write work, and while that restore fails, the work fails with `DURABILITY_RESTORE_FAILED` without running. Inside a `transaction` callback, `bulkLoad` fails with `BULK_LOAD_IN_TRANSACTION`. When `checkpoint` is set, WAL mode is active, and the load changed rows, a WAL checkpoint runs afterwards; it retries at most three times (recommended) and leaves the remaining pages to a later checkpoint where a reader still holds them. A database opened with `backups` runs no checkpoint here, whatever the caller set.
+
+---
+
+## Checkpoint
+
+```text
+CheckpointResult {
+  busy:               boolean
+  framesInLog:        number
+  framesCheckpointed: number
+  emptied:            boolean
+}
+```
+
+`checkpoint` copies the write-ahead log into the database file and truncates the log. It runs a `TRUNCATE` checkpoint on the writer connection under the writer lock, so it waits for the writes in progress, and no write starts until it ends. A reader that holds part of the log can stop the checkpoint, so the implementation tries at most three times (recommended) and reports the last try. On a database without `backups`, each try must report busy at once when a reader holds the log, without waiting for the connection's busy timeout, so that a long read never holds the writer lock.
+
+`busy` reports that a reader, or another connection that writes, stopped the checkpoint. `framesInLog` and `framesCheckpointed` carry the counts that SQLite reports, and both are zero once SQLite empties the log. `emptied` is true only when the checkpoint was not busy and the log holds no frames afterwards. A database outside WAL mode and an in-memory database report an emptied log.
+
+A read-only database fails with `READ_ONLY`. A call from inside a `transaction` callback fails with `CHECKPOINT_IN_TRANSACTION`, because SQLite checkpoints a log only outside a transaction.
+
+On a database opened with `backups`, the backup cycle runs every checkpoint, because the cycle must capture the log frames before a checkpoint lets SQLite overwrite them. `checkpoint` then takes one turn of the cycle, as `captureBackupChanges` does, and reports the checkpoint of that turn. When that turn starts a fresh chain with a full copy, which checkpoints nothing, `checkpoint` takes one more turn. A turn that fails fails `checkpoint` with the turn's error, and where the cycle skips the turn without a checkpoint, as it does while the replication group is out of reach, `checkpoint` fails with `BACKUP_ERROR`. A node whose replication group takes its backups from another node checkpoints without a capture and reports that checkpoint.
 
 ---
 

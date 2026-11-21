@@ -436,6 +436,14 @@ export interface ChangeTrackerOptions {
 }
 
 // @public
+export interface CheckpointResult {
+    busy: boolean;
+    emptied: boolean;
+    framesCheckpointed: number;
+    framesInLog: number;
+}
+
+// @public
 export interface ClientOptions {
     autoReconnect?: boolean;
     headers?: Record<string, string>;
@@ -612,6 +620,7 @@ export class DatabaseBackups extends DatabaseLifecycle {
     backupStatus(): BackupCycleStatus;
     backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport>;
     captureBackupChanges(): Promise<BackupRunReport | undefined>;
+    checkpoint(): Promise<CheckpointResult>;
     scheduleBackup(options: BackupScheduleOptions): void;
     verifyBackup(name: string): Promise<BackupVerifyResult>;
 }

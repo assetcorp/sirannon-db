@@ -1,7 +1,10 @@
 import type { SQLiteConnection } from '../driver/types.js'
+import { readBusyTimeout, setBusyTimeout } from '../system-catalog/index.js'
 
 const CHECKPOINT_ATTEMPTS = 3
 const CHECKPOINT_RETRY_DELAY_MS = 50
+const NO_WRITE_AHEAD_LOG = -1
+const LOG_ABSENT: CheckpointResult = { busy: false, framesInLog: 0, framesCheckpointed: 0, emptied: true }
 
 interface CheckpointRow {
   busy: number | bigint
@@ -9,15 +12,20 @@ interface CheckpointRow {
   checkpointed: number | bigint
 }
 
-/** The frames that one checkpoint moves out of the write-ahead log, and the state of the log afterwards.
- * @internal
+/**
+ * The frames that one checkpoint moves out of the write-ahead log, and the state of the log afterwards.
+ *
+ * @public
  */
 export interface CheckpointResult {
-  /** Whether another reader or writer kept SQLite from finishing the checkpoint. */
+  /** Whether a reader, or another connection that writes, kept SQLite from finishing the checkpoint. */
   busy: boolean
   /** The number of frames that remain in the log. */
   framesInLog: number
-  /** The number of frames that SQLite copies back into the database file. */
+  /**
+   * The number of frames that SQLite copies back into the database file when the log stays in place. SQLite reports
+   * zero here and in {@link CheckpointResult.framesInLog} once it empties the log.
+   */
   framesCheckpointed: number
   /** Whether the log is empty after the checkpoint, in which case SQLite starts a new log at the next write. */
   emptied: boolean
@@ -38,8 +46,12 @@ function delay(ms: number): Promise<void> {
  * copy in progress from page one when another connection runs a truncating
  * checkpoint.
  *
+ * A database without a write-ahead log has nothing to checkpoint, so this
+ * function reports an empty log for it.
+ *
  * @param conn - The writer connection.
  * @returns The frames that the checkpoint moves, and whether the log is empty afterwards.
+ * @internal
  */
 export async function checkpointLog(conn: SQLiteConnection): Promise<CheckpointResult> {
   let last: CheckpointResult = { busy: true, framesInLog: 0, framesCheckpointed: 0, emptied: false }
@@ -49,6 +61,7 @@ export async function checkpointLog(conn: SQLiteConnection): Promise<CheckpointR
     const stmt = await conn.prepare('PRAGMA wal_checkpoint(TRUNCATE)')
     const row = await stmt.get<CheckpointRow>()
     if (!row) return last
+    if (Number(row.log) === NO_WRITE_AHEAD_LOG) return { ...LOG_ABSENT }
     const busy = Number(row.busy) !== 0
     const framesInLog = Number(row.log)
     last = {
@@ -61,4 +74,24 @@ export async function checkpointLog(conn: SQLiteConnection): Promise<CheckpointR
   }
 
   return last
+}
+
+/**
+ * Checkpoints the log as {@link checkpointLog} does, except that each try reports busy at once when a reader holds the
+ * log, so the writer lock stays held for the retry delays alone and never for the connection's busy timeout.
+ *
+ * Sirannon restores the connection's busy timeout afterwards, whether the checkpoint succeeds or throws.
+ *
+ * @param conn - The writer connection.
+ * @returns The frames that the checkpoint moves, and whether the log is empty afterwards.
+ * @internal
+ */
+export async function checkpointLogWithoutWaiting(conn: SQLiteConnection): Promise<CheckpointResult> {
+  const busyTimeout = await readBusyTimeout(conn)
+  await setBusyTimeout(conn, 0)
+  try {
+    return await checkpointLog(conn)
+  } finally {
+    await setBusyTimeout(conn, busyTimeout)
+  }
 }

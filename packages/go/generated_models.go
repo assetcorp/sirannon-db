@@ -483,6 +483,20 @@ type ChangesResponse struct {
 	Conflicts float64 `json:"conflicts"`
 }
 
+// CheckpointResponse: The body that `POST /db/{id}/checkpoint` returns once the checkpoint ends.
+type CheckpointResponse struct {
+	// Whether a reader, or another connection that writes, kept SQLite from finishing the checkpoint.
+	Busy bool `json:"busy"`
+	// The number of frames that remain in the write-ahead log.
+	FramesInLog float64 `json:"framesInLog"`
+	// The number of frames that SQLite copied back into the database file when the log stays in place.
+	// SQLite reports zero here and in `framesInLog` once it empties the log.
+	FramesCheckpointed float64 `json:"framesCheckpointed"`
+	// Whether the log is empty after the checkpoint, in which case SQLite starts a new log at the next
+	// write.
+	Emptied bool `json:"emptied"`
+}
+
 // ClusterReadEndpointInfo: One node that a client can read from, and the read concerns that the node
 // meets now.
 type ClusterReadEndpointInfo struct {

@@ -146,7 +146,7 @@ Sirannon checkpoints the log after each capture, but no checkpoint happens betwe
 
 ### Before you turn it on
 
-While this option is on, Sirannon turns off SQLite's automatic checkpoint, which empties the write-ahead log file beside your database, and it checkpoints that log itself immediately after each capture, so the log stays small while the cycle keeps up.
+While this option is on, Sirannon turns off SQLite's automatic checkpoint, which empties the write-ahead log file beside your database, and it checkpoints that log itself immediately after each capture, so the log stays small while the cycle keeps up. `db.checkpoint()` takes a turn of the cycle on such a database, so the capture always comes before the checkpoint, and `query` and `execute` refuse `PRAGMA wal_checkpoint` with `FORBIDDEN_SQL` so that no checkpoint can skip the capture.
 
 Plan for the case where the cycle stops. If the cycle keeps failing while your application keeps writing, the log grows until it fills the disk. A destination that starts rejecting writes can cause that, and so can credentials that expire. `onError` delivers each failure as it happens, so treat every error that it receives as urgent.
 

@@ -1,4 +1,5 @@
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcernLevel, WriteConcern } from '../core/types.js'
+import type { CheckpointResponse } from '../server/checkpoint-protocol.js'
 import type {
   BatchResponse,
   ExecuteResponse,
@@ -94,6 +95,10 @@ export class TopologyAwareTransport implements Transport {
     checkpoint?: boolean,
   ): Promise<LoadResponse> {
     return this.onWriteTransport(transport => transport.load(sql, paramsBatch, durability, checkpoint))
+  }
+
+  async checkpoint(): Promise<CheckpointResponse> {
+    return this.onWriteTransport(transport => transport.checkpoint())
   }
 
   private async onWriteTransport<T>(operation: (transport: Transport) => Promise<T>): Promise<T> {

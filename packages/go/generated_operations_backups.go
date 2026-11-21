@@ -6,6 +6,27 @@ import (
 	"context"
 )
 
+// Checkpoint sends POST /db/{id}/checkpoint: Checkpoints the write-ahead log of the database and
+// answers once the checkpoint ends, with whether a reader stopped it.
+//
+// Parameters:
+//   - id: The identifier of the database, percent-encoded, so that an identifier holding a slash
+//     reaches the database stored under it.
+//
+// Answers:
+//   - HTTP 200: The server answered the request.
+func (o *Operations) Checkpoint(ctx context.Context, id string, options ...CallOption) (*CheckpointResponse, error) {
+	request := exchange{
+		method: "POST",
+		path:   "/db/" + escapePathSegment(id) + "/checkpoint",
+	}
+	answer, err := o.transport.exchange(ctx, request, options)
+	if err != nil {
+		return nil, err
+	}
+	return decodePointer[CheckpointResponse](answer)
+}
+
 // GetBackupStatus sends GET /db/{id}/backup: Returns what the backup cycle is doing and the results of
 // its recent turns.
 //

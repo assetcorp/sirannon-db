@@ -127,6 +127,7 @@ Database endpoints use the prefix `/db/{id}`, where `{id}` is the URL-encoded da
 | `POST /db/{id}/migrations` | List applied migrations (see [08-device-sync.md](08-device-sync.md)) |
 | `POST /db/{id}/snapshot` | Snapshot manifest (see [08-device-sync.md](08-device-sync.md)) |
 | `POST /db/{id}/snapshot/page` | Snapshot page (see [08-device-sync.md](08-device-sync.md)) |
+| `POST /db/{id}/checkpoint` | Checkpoint the write-ahead log |
 | `POST /db/{id}/backup` | Run one turn of the checkpoint cycle |
 | `GET /db/{id}/backup` | Cycle status and the progress of the run in flight |
 | `GET /db/{id}/backup/chain` | List what the backup destination stores |
@@ -193,6 +194,16 @@ ClusterStatusInfo {
 `readEndpoints` holds one entry per node that counts towards majority and is neither quarantined, draining, nor repairing. A node the group counts as in sync serves `local` and `majority`; a node that has fallen behind serves `local` alone, because a `local` read carries no in-sync requirement. A node running without a coordinator omits `readEndpoints`. In coordinator mode, the server uses the client address in each node's coordinator session as that node's `endpoint`.
 
 A node that watches the coordinator's node sessions must also leave out every node whose session has lapsed (see [09-failover.md](09-failover.md#cluster-coordinator)). A node that reaches no coordinator, and one whose coordinator serves no such watch, lists the group's membership alone.
+
+### Checkpoint Endpoint
+
+```text
+POST /db/{id}/checkpoint                                         -> CheckpointResult
+```
+
+[02-core.md](02-core.md#checkpoint) defines `CheckpointResult`. The server runs `checkpoint` on the open database and answers once the checkpoint ends, because the result is what the caller asks for. On a database with `backups`, that answer waits for a turn of the cycle, which can take as long as a full copy.
+
+The server runs `authenticate` before this route, as before every `/db/{id}` request, and serves it whatever `acceptSql` is set to. The body may be empty, and a body that parses as JSON but is not an object fails with `400 INVALID_REQUEST`. An identifier with no database open fails with `404 DATABASE_NOT_FOUND`, and a read-only database fails with `403 READ_ONLY`.
 
 ### Backup Endpoints
 

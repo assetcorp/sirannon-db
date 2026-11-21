@@ -19,6 +19,21 @@ const summary = await db.loadAll('INSERT INTO events (id, payload) VALUES (?, ?)
 })
 ```
 
+## Checkpoint
+
+`checkpoint()` copies the write-ahead log into the database file and empties the log, for example before you copy the file with a tool that reads the database file alone:
+
+```ts
+const result = await db.checkpoint()
+if (!result.emptied) console.warn(`a reader holds ${result.framesInLog} frames of the log`)
+```
+
+Sirannon runs the checkpoint on the writer under the writer lock, so it waits for the writes in progress. A reader that holds an open transaction can keep SQLite from emptying the log, and in that case `checkpoint()` reports `busy: true` with the frames left in the log, and it never waits for that reader. Call it again once the reader finishes.
+
+On a database opened with the `backups` option, `checkpoint()` takes a turn of the backup cycle, because the cycle has to capture the log before any checkpoint. It fails with `BACKUP_ERROR` when the cycle skips that turn, as it does while the replication group is out of reach.
+
+`query` and `execute` refuse `PRAGMA wal_checkpoint` with `FORBIDDEN_SQL`. A checkpoint on a reader connection can return a backup copy to its first page, and on a database with backups, a checkpoint outside the cycle can discard log frames that no backup holds yet.
+
 ## Live queries
 
 `db.live` returns a query result that Sirannon updates from change events, so a view re-renders without polling or re-reading the table:

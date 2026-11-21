@@ -456,7 +456,7 @@ Migration {
 
 The version cap is 2,147,483,647 because it mirrors to `PRAGMA user_version`, a signed 32-bit value.
 
-A migration runs without foreign keys when `withoutForeignKeys` is true, or when its SQL holds a `PRAGMA foreign_keys` statement that sets the value `OFF`, `NO`, `FALSE`, or `0`, in any letter case and whether bare or quoted, at any position among its statements. The same test applies to `down` during a rollback. A non-boolean `withoutForeignKeys` fails with `MIGRATION_VALIDATION_ERROR`.
+A migration runs without foreign keys when `withoutForeignKeys` is true, or when its SQL holds a `PRAGMA foreign_keys` statement that sets the value `OFF`, `NO`, `FALSE`, or `0`, in any letter case and whether bare or quoted, at any position among its statements. The same test applies to `down` during a rollback. A non-boolean `withoutForeignKeys` fails with `MIGRATION_VALIDATION_ERROR`. A migration with `withoutForeignKeys: true` and a string `up` must include that pragma in its `up` SQL, because a device receives only the SQL. Validation rejects a string `up` that lacks the pragma with `MIGRATION_VALIDATION_ERROR`.
 
 ### Checksum (Normative)
 

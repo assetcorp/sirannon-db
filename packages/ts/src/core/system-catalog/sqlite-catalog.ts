@@ -191,6 +191,42 @@ export async function setForeignKeysEnabled(conn: SQLiteConnection, enabled: boo
 }
 
 /**
+ * Returns whether a connection enforces foreign keys.
+ *
+ * @param conn - The connection to read.
+ * @returns `true` when SQLite enforces foreign keys on the connection.
+ * @internal
+ */
+export async function foreignKeysEnabled(conn: SQLiteConnection): Promise<boolean> {
+  const stmt = await conn.prepare('PRAGMA foreign_keys')
+  const row = (await stmt.get()) as { foreign_keys?: number | bigint } | undefined
+  return Number(row?.foreign_keys ?? 0) !== 0
+}
+
+/**
+ * Holds one row that `PRAGMA foreign_key_check` reports: a row whose foreign key refers to no row of its parent.
+ *
+ * @internal
+ */
+export interface ForeignKeyViolationRow {
+  table: string
+  rowid: number | bigint | null
+  parent: string
+}
+
+/**
+ * Returns every row in the database whose foreign key refers to no row of its parent table.
+ *
+ * @param conn - The connection whose database to check, which can hold an open transaction.
+ * @returns One row per broken reference, or no rows when every foreign key holds.
+ * @internal
+ */
+export async function foreignKeyViolations(conn: SQLiteConnection): Promise<ForeignKeyViolationRow[]> {
+  const stmt = await conn.prepare('PRAGMA foreign_key_check')
+  return (await stmt.all()) as ForeignKeyViolationRow[]
+}
+
+/**
  * Returns every table and index that the application created, with the statement that SQLite stores for each.
  *
  * @param conn - The connection whose schema to read.

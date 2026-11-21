@@ -220,13 +220,13 @@ export class MigrationRunner {
             )
           }
           await deleteStmt.run(entry.version)
+          if (afterRollback) await afterRollback(txConn)
           rolledBackEntries.push({ version: entry.version, name: entry.name })
         }
 
         const rolledBackVersions = new Set(rollbackSet.map(r => r.version))
         const remaining = appliedRows.find(row => !rolledBackVersions.has(row.version))
         await mirrorSchemaVersion(txConn, remaining === undefined ? 0 : remaining.version)
-        if (afterRollback) await afterRollback(txConn)
 
         return { rolledBack: rolledBackEntries }
       }),

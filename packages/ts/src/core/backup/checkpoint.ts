@@ -20,11 +20,13 @@ interface CheckpointRow {
 export interface CheckpointResult {
   /** Whether a reader, or another connection that writes, kept SQLite from finishing the checkpoint. */
   busy: boolean
-  /** The number of frames that remain in the log. */
+  /** The number of frames in the log, or zero when another connection holds the checkpoint lock and SQLite reports no count. */
   framesInLog: number
   /**
    * The number of frames that SQLite copies back into the database file when the log stays in place. SQLite reports
-   * zero here and in {@link CheckpointResult.framesInLog} once it empties the log.
+   * zero here and in {@link CheckpointResult.framesInLog} once it empties the log. When another connection holds the
+   * checkpoint lock, SQLite reports no counts, so Sirannon sets both counts to zero and {@link CheckpointResult.busy}
+   * to true.
    */
   framesCheckpointed: number
   /** Whether the log is empty after the checkpoint, in which case SQLite starts a new log at the next write. */
@@ -48,6 +50,8 @@ function delay(ms: number): Promise<void> {
  *
  * A database without a write-ahead log has nothing to checkpoint, so this
  * function reports an empty log for it.
+ * When another connection holds the checkpoint lock, SQLite reports no counts,
+ * so Sirannon sets both counts to zero and reports busy after the last try.
  *
  * @param conn - The writer connection.
  * @returns The frames that the checkpoint moves, and whether the log is empty afterwards.
@@ -61,13 +65,13 @@ export async function checkpointLog(conn: SQLiteConnection): Promise<CheckpointR
     const stmt = await conn.prepare('PRAGMA wal_checkpoint(TRUNCATE)')
     const row = await stmt.get<CheckpointRow>()
     if (!row) return last
-    if (Number(row.log) === NO_WRITE_AHEAD_LOG) return { ...LOG_ABSENT }
     const busy = Number(row.busy) !== 0
-    const framesInLog = Number(row.log)
+    if (!busy && Number(row.log) === NO_WRITE_AHEAD_LOG) return { ...LOG_ABSENT }
+    const framesInLog = Math.max(0, Number(row.log))
     last = {
       busy,
       framesInLog,
-      framesCheckpointed: Number(row.checkpointed),
+      framesCheckpointed: Math.max(0, Number(row.checkpointed)),
       emptied: !busy && framesInLog === 0,
     }
     if (last.emptied) return last
@@ -88,8 +92,8 @@ export async function checkpointLog(conn: SQLiteConnection): Promise<CheckpointR
  */
 export async function checkpointLogWithoutWaiting(conn: SQLiteConnection): Promise<CheckpointResult> {
   const busyTimeout = await readBusyTimeout(conn)
-  await setBusyTimeout(conn, 0)
   try {
+    await setBusyTimeout(conn, 0)
     return await checkpointLog(conn)
   } finally {
     await setBusyTimeout(conn, busyTimeout)

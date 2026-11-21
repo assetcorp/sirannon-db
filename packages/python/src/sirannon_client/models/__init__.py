@@ -659,10 +659,14 @@ class CheckpointResponse(ApiModel):
     checkpoint.
     """
     frames_in_log: int | float = Field(alias="framesInLog")
-    """The number of frames that remain in the write-ahead log."""
+    """The number of frames in the write-ahead log, or zero when another connection holds the
+    checkpoint lock and SQLite reports no count.
+    """
     frames_checkpointed: int | float = Field(alias="framesCheckpointed")
     """The number of frames that SQLite copied back into the database file when the log stays in
-    place. SQLite reports zero here and in `framesInLog` once it empties the log.
+    place. SQLite reports zero here and in `framesInLog` once it empties the log. When another
+    connection holds the checkpoint lock, SQLite reports no counts, so Sirannon sets both counts
+    to zero and `busy` to true.
     """
     emptied: bool
     """Whether the log is empty after the checkpoint, in which case SQLite starts a new log at the

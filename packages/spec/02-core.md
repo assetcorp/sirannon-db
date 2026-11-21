@@ -513,7 +513,7 @@ CheckpointResult {
 
 `checkpoint` copies the write-ahead log into the database file and truncates the log. It runs a `TRUNCATE` checkpoint on the writer connection under the writer lock, so it waits for the writes in progress, and no write starts until it ends. A reader that holds part of the log can stop the checkpoint, so the implementation tries at most three times (recommended) and reports the last try. On a database without `backups`, each try must report busy at once when a reader holds the log, without waiting for the connection's busy timeout, so that a long read never holds the writer lock.
 
-`busy` reports that a reader, or another connection that writes, stopped the checkpoint. `framesInLog` and `framesCheckpointed` carry the counts that SQLite reports, and both are zero once SQLite empties the log. `emptied` is true only when the checkpoint was not busy and the log holds no frames afterwards. A database outside WAL mode and an in-memory database report an emptied log.
+`busy` reports that a reader, or another connection that writes, stopped the checkpoint. `framesInLog` and `framesCheckpointed` carry the counts that SQLite reports, and both are zero once SQLite empties the log. When another connection holds the checkpoint lock, SQLite reports no counts, so Sirannon sets both counts to zero and `busy` to true. `emptied` is true only when the checkpoint was not busy and the log holds no frames afterwards. A database outside WAL mode and an in-memory database report an emptied log.
 
 A read-only database fails with `READ_ONLY`. A call from inside a `transaction` callback fails with `CHECKPOINT_IN_TRANSACTION`, because SQLite checkpoints a log only outside a transaction.
 

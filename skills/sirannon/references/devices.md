@@ -4,13 +4,11 @@
 
 - In the browser, install `wa-sqlite`, then open the database through the registry as on a server: `new Sirannon({ driver: waSqlite() })` and `await sirannon.open(id, path)`.
 - Under Vite, add `optimizeDeps: { exclude: ['wa-sqlite'] }` to `vite.config.ts`.
-- On React Native, install `expo-sqlite` and use `expoSqlite()`. Tell the user that the Expo driver is experimental.
+- On React Native, install `expo-sqlite` and use `expoSqlite()`.
 - A device database takes no backups and loads no extensions, so the server keeps the durable copy.
 - Build migrations with `migrationsFromFiles`, as [tenants.md](tenants.md) shows.
 
 ## Device sync
-
-Device sync is experimental, so confirm with the user before you build it.
 
 1. On the server, open the same database, execute `db.watch(table)` for each synced table, and pass `acceptDeviceSync: true` and an `authenticate` hook to `createServer`. A 0.3.3 server has no such option and accepts device sync from every caller that it admits.
 2. On the device, migrate, then execute `db.watch(table)` for each synced table before the app writes to it.

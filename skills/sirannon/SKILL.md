@@ -37,7 +37,7 @@ Serve it in every other case: an app in another language, several services shari
 | Node.js 22.13+, no native build | `driver/node`, `nodeSqlite()` | Nothing |
 | Browser | `driver/wa-sqlite`, `waSqlite()` | `wa-sqlite` |
 | Bun (experimental) | `driver/bun`, `bunSqlite()` | Nothing |
-| React Native with Expo (experimental) | `driver/expo`, `expoSqlite()` | `expo-sqlite` |
+| React Native with Expo | `driver/expo`, `expoSqlite()` | `expo-sqlite` |
 
 Default to `better-sqlite3` on Node.js. Every import path starts with `@delali/sirannon-db/`.
 
@@ -57,7 +57,7 @@ Read the reference file for each capability that the task needs:
 | A browser or phone database, or offline device sync | [references/devices.md](references/devices.md) |
 | Read replicas or failover across nodes | [references/replication.md](references/replication.md) |
 
-Device sync and the Bun and Expo drivers are experimental. Tell the user so before you build on one, and wait for them to confirm.
+The Bun driver is experimental. Tell the user so before you build on it, and wait for them to confirm.
 
 ## 5. Verify and report
 

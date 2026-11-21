@@ -20,10 +20,10 @@ Read the [documentation](https://sirannon.sondelali.com/docs), or start the [dis
 | --- | --- | --- |
 | Core engine ([`@delali/sirannon-db`](packages/ts/)) | Stable | With the core engine, you get queries, transactions, connection pooling, change data capture, live queries, migrations, backups, hooks, metrics, and a multi-tenant lifecycle. Continuous integration tests it on Node 22 and 24. |
 | Server and client (`@delali/sirannon-db/server`, `/client`) | Stable | Applications reach a database over HTTP and WebSocket through the client, which reconnects after a dropped connection and restores its subscriptions. The server rejects SQL from the network until you set `acceptSql: true`. |
-| Device sync (`@delali/sirannon-db/client`) | Experimental | A device writes to its own local database first, so it can go on writing while it's offline. The device sync controller then keeps that database in step with a server in both directions, through a push, a live pull, a snapshot resync, and a migration handshake. |
+| Device sync (`@delali/sirannon-db/client`) | Stable | A device writes to its own local database first, so it can go on writing while it's offline. The device sync controller then keeps that database in step with a server in both directions, through a push, a live pull, a snapshot resync, and a migration handshake. |
 | Primary-replica replication (`@delali/sirannon-db/replication`) | Stable | A primary stamps each change with a Hybrid Logical Clock and sends it to its replicas over gRPC with mutual TLS. The same export also provides conflict resolvers, first sync, and write concerns. |
 | Coordinator-backed failover (`/replication/coordinator/etcd`) | Stable | etcd records write authority, primary terms, and the in-sync set. On every pull request, continuous integration executes a Docker conformance suite that injects faults. |
-| Drivers | Stable: better-sqlite3, Node, wa-sqlite. Experimental: Bun, Expo | The published package includes TypeScript declarations for all five drivers. |
+| Drivers | Stable: better-sqlite3, Node, wa-sqlite, Expo. Experimental: Bun | The published package includes TypeScript declarations for all five drivers. |
 
 Sirannon opens each database in SQLite's WAL mode with `synchronous=NORMAL` by default, although you can raise that durability level. Read the [roadmap](ROADMAP.md) for the next stages of work.
 

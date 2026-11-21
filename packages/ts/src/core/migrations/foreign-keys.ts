@@ -25,7 +25,8 @@ export function runsWithoutForeignKeys(migration: Migration, step: MigrationStep
   return typeof step === 'string' && FOREIGN_KEYS_WORD_RE.test(step) && turnsForeignKeysOff(tokenizeSql(step))
 }
 
-function turnsForeignKeysOff(tokens: readonly SqlToken[]): boolean {
+function turnsForeignKeysOff(input: readonly SqlToken[]): boolean {
+  const tokens = input.filter(token => token.kind !== 'punct' || token.value !== '\ufeff')
   let statementStart = true
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i]
@@ -43,7 +44,9 @@ function setsForeignKeysOff(tokens: readonly SqlToken[], from: number): boolean 
   let at = from
   if (tokens[at + 1]?.kind === 'punct' && tokens[at + 1]?.value === '.') at += 2
   const name = tokens[at]
-  if (name === undefined || name.kind !== 'word' || name.lower !== 'foreign_keys') return false
+  if (name === undefined || (name.kind !== 'word' && name.kind !== 'string')) return false
+  const identifier = name.kind === 'string' ? name.value.slice(1, -1).toLowerCase() : name.lower
+  if (identifier !== 'foreign_keys') return false
   const operator = tokens[at + 1]
   if (operator?.kind !== 'punct' || (operator.value !== '=' && operator.value !== '(')) return false
   const value = tokens[at + 2]

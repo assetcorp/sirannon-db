@@ -475,6 +475,41 @@
         }
       }
     },
+    "/db/{id}/checkpoint": {
+      "post": {
+        "operationId": "checkpoint",
+        "summary": "Checkpoints the write-ahead log of the database and answers once the checkpoint ends, with whether a reader stopped it.",
+        "tags": [
+          "Backups"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The identifier of the database, percent-encoded, so that an identifier holding a slash reaches the database stored under it.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The server answered the request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
     "/db/{id}/backup": {
       "post": {
         "operationId": "triggerBackup",
@@ -1947,6 +1982,34 @@
           "conflicts"
         ],
         "description": "How the server applied a device's batch."
+      },
+      "CheckpointResponse": {
+        "type": "object",
+        "properties": {
+          "busy": {
+            "type": "boolean",
+            "description": "Whether a reader, or another connection that writes, kept SQLite from finishing the checkpoint."
+          },
+          "framesInLog": {
+            "type": "number",
+            "description": "The number of frames that remain in the write-ahead log."
+          },
+          "framesCheckpointed": {
+            "type": "number",
+            "description": "The number of frames that SQLite copied back into the database file when the log stays in place. SQLite reports zero here and in `framesInLog` once it empties the log."
+          },
+          "emptied": {
+            "type": "boolean",
+            "description": "Whether the log is empty after the checkpoint, in which case SQLite starts a new log at the next write."
+          }
+        },
+        "required": [
+          "busy",
+          "framesInLog",
+          "framesCheckpointed",
+          "emptied"
+        ],
+        "description": "The body that `POST /db/{id}/checkpoint` returns once the checkpoint ends."
       },
       "ClusterReadEndpointInfo": {
         "type": "object",

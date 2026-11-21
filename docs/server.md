@@ -97,6 +97,7 @@ Clients URL-encode `{id}` and `{name}`, and the server decodes each one before i
 | `POST` | `/db/{id}/migrations` | Lists the migrations that a database has applied |
 | `POST` | `/db/{id}/snapshot` | Opens a snapshot and returns its manifest |
 | `POST` | `/db/{id}/snapshot/page` | Reads one page of a snapshot |
+| `POST` | `/db/{id}/checkpoint` | Checkpoints the write-ahead log and returns `{ busy, framesInLog, framesCheckpointed, emptied }` once the checkpoint ends |
 | `POST` | `/db/{id}/backup` | Starts one turn of the checkpoint cycle and returns `202` |
 | `GET` | `/db/{id}/backup` | Returns what the cycle is doing and what its recent turns produced |
 | `GET` | `/db/{id}/backup/chain` | Lists every chain at the backup destination, newest first |
@@ -111,7 +112,7 @@ Clients URL-encode `{id}` and `{name}`, and the server decodes each one before i
 | `GET` | `/health` | Answers a liveness check |
 | `GET` | `/health/ready` | Answers a readiness check with per-database status |
 
-Read the [device sync guide](device-sync.md) for the four device routes. A read body can include `readConcern` and a write body can include `writeConcern`, and the [replication guide](replication.md#read-concern) defines both.
+The server serves `/db/{id}/checkpoint` whatever `acceptSql` is set to, so keep it for operators in your `authenticate` hook, as the backup routes below show. On a database with `backups`, the answer waits for a turn of the backup cycle. Read the [device sync guide](device-sync.md) for the four device routes. A read body can include `readConcern` and a write body can include `writeConcern`, and the [replication guide](replication.md#read-concern) defines both.
 
 ## Encryption routes
 

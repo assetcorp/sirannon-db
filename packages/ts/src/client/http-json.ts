@@ -55,6 +55,7 @@ export async function postJson(
   body: unknown,
   headers: Record<string, string> | undefined,
   timeoutMs: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+  cancel?: AbortSignal,
 ): Promise<unknown> {
   return requestJson(
     url,
@@ -64,6 +65,7 @@ export async function postJson(
       body: JSON.stringify(body),
     },
     timeoutMs,
+    cancel,
   )
 }
 

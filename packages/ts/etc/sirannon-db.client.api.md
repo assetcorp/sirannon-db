@@ -43,6 +43,7 @@ export class HttpTransport implements Transport {
     batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>;
     // @internal (undocumented)
     readonly carriesReadConcern = true;
+    checkpoint(): Promise<CheckpointResponse>;
     close(): void;
     execute(sql: string, params?: Params): Promise<ExecuteResponse>;
     executeNamed(name: string, args?: Record<string, unknown>, writeConcern?: WriteConcern): Promise<TransactionResponse>;
@@ -93,6 +94,7 @@ export class RemoteDatabase {
     constructor(
     id: string, transport: Transport, capabilities: ServerCapabilityCheck, onDispose?: (() => void) | undefined);
     batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<ExecuteResponse[]>;
+    checkpoint(): Promise<CheckpointResponse>;
     close(): void;
     execute(sql: string, params?: Params): Promise<ExecuteResponse>;
     execute<Args>(operation: OperationRef<Args, unknown>, args: Args, writeConcern?: WriteConcern): Promise<ExecuteResponse[]>;
@@ -303,6 +305,7 @@ export interface SyncStatus {
 export interface Transport {
     batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>;
     readonly carriesReadConcern?: boolean;
+    checkpoint(): Promise<CheckpointResponse>;
     close(): void;
     execute(sql: string, params?: Params): Promise<ExecuteResponse>;
     executeNamed(name: string, args?: Record<string, unknown>, writeConcern?: WriteConcern): Promise<TransactionResponse>;
@@ -331,6 +334,7 @@ export class WebSocketTransport implements Transport {
     batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>;
     // @internal (undocumented)
     readonly carriesReadConcern = true;
+    checkpoint(): Promise<CheckpointResponse>;
     close(): void;
     execute(sql: string, params?: Params): Promise<ExecuteResponse>;
     executeNamed(name: string, args?: Record<string, unknown>, writeConcern?: WriteConcern): Promise<TransactionResponse>;

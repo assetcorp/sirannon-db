@@ -1,5 +1,6 @@
 import { decodeWireRowsInPlace, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
+import type { CheckpointResponse } from '../../server/checkpoint-protocol.js'
 import type {
   BatchResponse,
   ErrorResponse,
@@ -79,6 +80,11 @@ export class HttpTransport implements Transport {
       durability,
       checkpoint,
     })
+  }
+
+  /** Checkpoints the database's write-ahead log on the server and returns whether the checkpoint finished. */
+  async checkpoint(): Promise<CheckpointResponse> {
+    return this.post<CheckpointResponse>('/checkpoint', {})
   }
 
   /** Executes a registered read by name and returns its rows. */

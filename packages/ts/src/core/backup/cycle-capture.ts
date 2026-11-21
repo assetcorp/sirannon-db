@@ -198,7 +198,9 @@ export async function captureAndCheckpointTurn(turn: CaptureTurnRequest): Promis
       await writeCycleState(stagingDir, state)
     }
 
-    const checkpointed = (await checkpointLog(request.acquireWriter())).emptied
+    const checkpoint = await checkpointLog(request.acquireWriter())
+    request.onCheckpoint?.(checkpoint)
+    const checkpointed = checkpoint.emptied
     const cursor = captured?.cursor ?? state.cursor
     if (cursor) cursor.checkpointed = checkpointed
     state.closedCleanly = false

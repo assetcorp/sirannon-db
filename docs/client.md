@@ -47,6 +47,8 @@ await db.loadAll('INSERT INTO events (id, payload) VALUES (?, ?)', rowStream, { 
 
 `loadAll` splits an iterable into batches, sends each as one request, and checkpoints the WAL once at the end. Each batch must fit under the server's `maxBodyBytes`.
 
+`db.checkpoint()` asks the server to checkpoint the write-ahead log and returns whether a reader stopped it. The client sends it over HTTP whichever transport you choose, and the topology transport sends it to the primary. On a database with backups, the server answers after a turn of the backup cycle, so raise `requestTimeout` when a full copy of that database takes longer than the timeout.
+
 ## Subscriptions and live queries
 
 Change subscriptions and [live queries](live-queries.md) both need the WebSocket transport and fail with `TRANSPORT_ERROR` over HTTP. A subscription reports the rows that changed, while a live query reports the current answer to a registered read.

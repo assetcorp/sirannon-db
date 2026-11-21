@@ -6,6 +6,7 @@ import {
   backupPiecesSafeToDelete,
   planBackupRestore,
 } from './backup/chain-queries.js'
+import { type CheckpointResult, checkpointLogWithoutWaiting } from './backup/checkpoint.js'
 import { BackupCopyAdmission } from './backup/copy-admission.js'
 import type { BackupCycle } from './backup/cycle.js'
 import { type BackupCycleOptions, defaultStagingDir } from './backup/cycle-options.js'
@@ -21,6 +22,8 @@ import { SirannonError } from './errors.js'
 import type { BackupScheduleOptions } from './types.js'
 
 type RunExclusive = (op: () => Promise<void>) => Promise<void>
+
+const CYCLE_TURNS_PER_CHECKPOINT = 2
 
 /** The destination and chain name under which Sirannon stores one database's backups, with the directory where it stages each capture.
  * @public
@@ -82,6 +85,8 @@ export class DatabaseBackupController {
   private cycleStarted: Promise<void> = Promise.resolve()
   private readonly copies: BackupCopyAdmission
   private readonly copyWriter: SQLiteConnection
+  private cycleCheckpoints = 0
+  private lastCycleCheckpoint: CheckpointResult | undefined
 
   constructor(
     private readonly runExclusive: RunExclusive,
@@ -173,6 +178,7 @@ export class DatabaseBackupController {
       acquireWriter: this.acquireWriter,
       fullCopy: copyOptions => this.backupTo(copyOptions),
       keyId: this.keyId,
+      onCheckpoint: result => this.recordCycleCheckpoint(result),
     })
     this.cycleStarted = this.cycle.start().catch(err => {
       const onError = options.onError
@@ -184,6 +190,44 @@ export class DatabaseBackupController {
   captureChanges(): Promise<BackupRunReport | undefined> {
     const cycle = this.requireCycle()
     return this.cycleStarted.then(() => cycle.runOnce())
+  }
+
+  checkpoint(): Promise<CheckpointResult> {
+    const cycle = this.cycle
+    return cycle ? this.checkpointThroughCycle(cycle) : this.checkpointWriter()
+  }
+
+  private async checkpointWriter(): Promise<CheckpointResult> {
+    const outcome: { result?: CheckpointResult } = {}
+    await this.runExclusive(async () => {
+      outcome.result = await checkpointLogWithoutWaiting(this.acquireWriter())
+    })
+    if (outcome.result === undefined) {
+      throw new SirannonError(`The checkpoint of database '${this.databaseId}' returned no result`, 'INTERNAL_ERROR')
+    }
+    return outcome.result
+  }
+
+  private recordCycleCheckpoint(result: CheckpointResult): void {
+    this.cycleCheckpoints++
+    this.lastCycleCheckpoint = result
+  }
+
+  private async checkpointThroughCycle(cycle: BackupCycle): Promise<CheckpointResult> {
+    await this.cycleStarted
+    const before = this.cycleCheckpoints
+    for (let turn = 0; turn < CYCLE_TURNS_PER_CHECKPOINT && this.cycleCheckpoints === before; turn++) {
+      await cycle.runOnce()
+    }
+    const result = this.lastCycleCheckpoint
+    if (this.cycleCheckpoints === before || result === undefined) {
+      const skip = cycle.status().lastSkip
+      throw new SirannonError(
+        `Database '${this.databaseId}' takes its checkpoints in the backup cycle, and the cycle ran none on this turn${skip ? `: ${skip.message}` : ''}`,
+        'BACKUP_ERROR',
+      )
+    }
+    return { ...result }
   }
 
   chains(): Promise<BackupChain[]> {

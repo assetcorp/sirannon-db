@@ -1,11 +1,13 @@
 import type { BackupCapabilities } from './backup/capabilities.js'
 import type { BackupChain, BackupChainRecord } from './backup/chain.js'
 import type { BackupRestorePlan, BackupSafeToDeleteOptions } from './backup/chain-queries.js'
+import type { CheckpointResult } from './backup/checkpoint.js'
 import type { BackupCycleStatus } from './backup/cycle-status.js'
 import type { BackupFileReport, BackupRunReport, BackupToDestinationOptions } from './backup/report.js'
 import type { BackupVerifyResult } from './backup/verify.js'
 import type { BackupChainLocation } from './database-backup.js'
 import { DatabaseLifecycle } from './database-lifecycle.js'
+import { SirannonError } from './errors.js'
 import type { BackupScheduleOptions } from './types.js'
 
 /**
@@ -94,6 +96,48 @@ export class DatabaseBackups extends DatabaseLifecycle {
     this.ensureOpen()
     this.ensureWriterCanWait()
     return this.runtime.backups.captureChanges()
+  }
+
+  /**
+   * Copies the write-ahead log back into the database file and reports whether
+   * the checkpoint finished.
+   *
+   * Sirannon runs a `TRUNCATE` checkpoint on the writer connection under the
+   * writer lock, so the checkpoint waits for the writes in progress, and no
+   * other write starts until it ends. A reader that holds part of the log can
+   * stop the checkpoint before it finishes, so Sirannon tries up to three times
+   * and reports the last try. Each try reports busy at once when a reader holds
+   * the log, so a held reader keeps the writer for the 150 milliseconds between
+   * tries and no longer. A database without a write-ahead log reports an empty
+   * log.
+   *
+   * On a database opened with the `backups` option, the backup cycle runs every
+   * checkpoint, because it has to capture the log first. This method then takes
+   * one turn of the cycle, as {@link DatabaseBackups.captureBackupChanges} does,
+   * and reports the checkpoint of that turn. When that turn starts a new chain
+   * with a full copy, which checkpoints nothing, Sirannon takes a second turn.
+   * Either turn can take as long as a full copy of the database.
+   *
+   * Call this in place of `PRAGMA wal_checkpoint`, which the query and execute
+   * methods refuse with `FORBIDDEN_SQL`.
+   *
+   * This method throws `READ_ONLY` on a read-only database, and
+   * `CHECKPOINT_IN_TRANSACTION` inside a transaction callback. On a database with
+   * backups, it throws the error that stops the turn, and `BACKUP_ERROR` when
+   * the cycle skips the turn and runs no checkpoint.
+   *
+   * @returns Whether a reader stopped the checkpoint, the frames left in the log, the frames that SQLite copied into the database file, and whether the log is empty afterwards.
+   */
+  async checkpoint(): Promise<CheckpointResult> {
+    this.ensureWritable()
+    this.ensureWriterCanWait()
+    if (this.runtime.writerLock.isHeld()) {
+      throw new SirannonError(
+        'SQLite checkpoints the log only outside a transaction, so a call inside a transaction callback fails; call checkpoint after the transaction ends',
+        'CHECKPOINT_IN_TRANSACTION',
+      )
+    }
+    return this.runtime.backups.checkpoint()
   }
 
   /**

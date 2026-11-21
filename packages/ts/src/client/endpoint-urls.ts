@@ -38,3 +38,7 @@ export function toServerBaseUrl(url: string, databaseId?: string): string {
 export function toWsUrl(baseUrl: string): string {
   return baseUrl.replace(/^http:\/\//i, 'ws://').replace(/^https:\/\//i, 'wss://')
 }
+
+export function toHttpUrl(wsUrl: string): string {
+  return wsUrl.replace(/^ws:\/\//i, 'http://').replace(/^wss:\/\//i, 'https://')
+}

@@ -1,4 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
+import type { CheckpointResult } from './checkpoint.js'
 import type { BackupDestination } from './destination.js'
 import type { BackupGroupSource, BackupNodePreference, BackupSkip } from './preferred-node.js'
 import type { BackupProgress, BackupRunReport, BackupToDestinationOptions } from './report.js'
@@ -148,4 +149,6 @@ export interface BackupCycleRequest extends BackupCycleOptions {
   fullCopy: (options: BackupToDestinationOptions) => Promise<BackupRunReport>
   /** Returns the identifier that came with the database's current key, which each chain record stores. */
   keyId?: () => string | undefined
+  /** Called with the result of every checkpoint that a turn runs, whether the turn captured the log first or stood down from its chain. */
+  onCheckpoint?: (result: CheckpointResult) => void
 }

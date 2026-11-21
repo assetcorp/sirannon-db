@@ -1,5 +1,6 @@
 import type { ResultOp } from '../core/live/types.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../core/types.js'
+import type { CheckpointResponse } from '../server/checkpoint-protocol.js'
 import type {
   BatchResponse,
   ExecuteResponse,
@@ -107,6 +108,8 @@ export interface Transport {
   batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>
   /** Sends a bulk load, which the server executes at relaxed durability. */
   load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>
+  /** Checkpoints the database's write-ahead log on the server, over HTTP whatever the transport, and returns whether the checkpoint finished. */
+  checkpoint(): Promise<CheckpointResponse>
   /** Executes a registered read by name and returns its rows. */
   queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse>
   /** Executes a registered write by name. */

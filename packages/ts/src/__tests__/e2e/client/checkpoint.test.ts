@@ -102,9 +102,14 @@ describe.each(TRANSPORTS)('checkpoint through the published client over %s', tra
       const failure = await caught(db.checkpoint())
       expect([failure.name, failure.code], text).toEqual(['RemoteError', 'INVALID_RESPONSE'])
     }
+    proxy.answerWith(request =>
+      request.path.endsWith('/checkpoint') ? { kind: 'reply', status: 503, text: 'null' } : undefined,
+    )
+    const failedResponse = await caught(db.checkpoint())
+    expect([failedResponse.name, failedResponse.code]).toEqual(['RemoteError', 'INVALID_RESPONSE'])
     proxy.answerWith(() => undefined)
     expect(await db.checkpoint()).toEqual(EMPTIED)
-    expect(proxy.requestsTo('POST', /\/db\/shop\/checkpoint$/)).toHaveLength(bodies.length + 1)
+    expect(proxy.requestsTo('POST', /\/db\/shop\/checkpoint$/)).toHaveLength(bodies.length + 2)
   })
 
   it('fails with TRANSPORT_ERROR when the client closes while the server has not answered, and sends nothing afterwards', async () => {

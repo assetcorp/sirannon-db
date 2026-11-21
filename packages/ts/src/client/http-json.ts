@@ -44,6 +44,12 @@ async function requestJson(url: string, init: RequestInit, timeoutMs: number, ca
   }
 
   if (!response.ok) {
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+      throw new RemoteError(
+        'INVALID_RESPONSE',
+        `Server returned a JSON value that is not an object (HTTP ${response.status})`,
+      )
+    }
     const errorData = data as { error?: { code?: string; message?: string } }
     throw new RemoteError(
       errorData.error?.code ?? 'UNKNOWN_ERROR',

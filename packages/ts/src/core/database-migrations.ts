@@ -100,17 +100,24 @@ export class DatabaseMigrationController {
   constructor(private readonly deps: DatabaseMigrationDeps) {}
 
   migrate(migrations: Migration[]): Promise<MigrationResult> {
-    const { writerLock, pool, changeTracker, stamper } = this.deps
-    return writerLock.runCallback(() =>
+    const { pool, changeTracker, stamper } = this.deps
+    return this.holdWriter(migrations, 'up', () =>
       migrateWithTriggerRefresh(pool.acquireWriter(), changeTracker(), migrations, stamper()),
     )
   }
 
   rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
-    const { writerLock, pool, changeTracker, stamper } = this.deps
-    return writerLock.runCallback(() =>
+    const { pool, changeTracker, stamper } = this.deps
+    return this.holdWriter(migrations, 'down', () =>
       rollbackWithTriggerRefresh(pool.acquireWriter(), changeTracker(), migrations, version, stamper()),
     )
+  }
+
+  private holdWriter<T>(migrations: Migration[], step: 'up' | 'down', operation: () => Promise<T>): Promise<T> {
+    const { writerLock } = this.deps
+    const callsApplication =
+      Array.isArray(migrations) && migrations.some(migration => typeof migration?.[step] === 'function')
+    return callsApplication ? writerLock.runCallback(operation) : writerLock.run(operation)
   }
 
   applied(): Promise<AppliedMigrationRow[]> {

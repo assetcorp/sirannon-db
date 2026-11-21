@@ -1,10 +1,10 @@
 import type { SQLiteConnection, SQLiteStatement } from '../driver/types.js'
 import { CDC_TRIGGER_PREFIX, CHANGES_TABLE } from '../internal-tables.js'
 import { isKeyword, type SqlToken, tokenizeSql } from '../live/sql-tokens.js'
-import { selectCapturedTableNames } from '../system-catalog/index.js'
+import { ensureReplacedRowsTable, selectCapturedTableNames } from '../system-catalog/index.js'
 import { ChangeTracker } from './change-tracker.js'
-import { columnDropAwareConnection, splitScript, statementCallsAround } from './column-drop.js'
-import { isCdcRelevantDdl } from './ddl-handler.js'
+import { executeAllowingColumnDrop } from './column-drop.js'
+import { splitMigrationScript, statementCallsAround } from './migration-statements.js'
 import { cdcTriggersMatch, dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 
 const SCHEMA_WORD_RE = /\b(?:CREATE|ALTER|DROP)\b/i
@@ -25,11 +25,13 @@ export async function migrationCaptureTracker(
   conn: SQLiteConnection,
   tracker: ChangeTracker | null,
 ): Promise<ChangeTracker | null> {
+  conn = migrationSchemaConnection(conn)
   const changesTable = tracker?.changeLogTable ?? CHANGES_TABLE
   const tables = new Set(tracker?.watchedTables ?? [])
   for (const table of await selectCapturedTableNames(conn, CDC_TRIGGER_PREFIX, changesTable)) tables.add(table)
   if (tables.size === 0) return null
 
+  await ensureReplacedRowsTable(conn)
   const capture = new ChangeTracker({ changesTable })
   for (const table of tables) await capture.adoptTable(conn, table)
   return capture.watchedTables.size === 0 ? null : capture
@@ -52,6 +54,7 @@ export async function restoreMigrationCapture(
   conn: SQLiteConnection,
   created?: string,
 ): Promise<void> {
+  conn = migrationSchemaConnection(conn)
   const changesTable = capture.changeLogTable
   const waiting = created?.toLowerCase()
   for (const table of capture.watchedTables) {
@@ -82,28 +85,39 @@ export async function restoreMigrationCapture(
  * @internal
  */
 export function captureKeepingConnection(capture: ChangeTracker, conn: SQLiteConnection): SQLiteConnection {
-  const aware = columnDropAwareConnection(capture, conn)
-  return {
-    ...aware,
-    exec: sql => execKeepingCapture(capture, conn, aware, sql),
+  const schema = migrationSchemaConnection(conn)
+  const wrapped: SQLiteConnection = {
+    ...conn,
+    exec: sql => execKeepingCapture(capture, conn, schema, sql),
     prepare: async sql => {
-      const stmt = await aware.prepare(sql)
-      return isCdcRelevantDdl(sql) ? statementKeepingCapture(capture, conn, sql, stmt) : stmt
+      const stmt = await conn.prepare(sql)
+      return changesSchema(tokenizeSql(sql)) ? statementKeepingCapture(capture, schema, sql, stmt) : stmt
     },
     transaction: fn => conn.transaction(txConn => fn(captureKeepingConnection(capture, txConn))),
   }
+  if (conn.runBatch) {
+    const runBatch = conn.runBatch
+    wrapped.runBatch = async (sql, paramsBatch) => {
+      if (!changesSchema(tokenizeSql(sql))) return runBatch.call(conn, sql, paramsBatch)
+      const stmt = await wrapped.prepare(sql)
+      const results = []
+      for (const params of paramsBatch) results.push(await stmt.run(...params))
+      return results
+    }
+  }
+  return wrapped
 }
 
 async function execKeepingCapture(
   capture: ChangeTracker,
   conn: SQLiteConnection,
-  aware: SQLiteConnection,
+  schema: SQLiteConnection,
   sql: string,
 ): Promise<void> {
-  if (!SCHEMA_WORD_RE.test(sql)) return aware.exec(sql)
-  for (const statement of splitScript(sql)) {
-    await aware.exec(statement.text)
-    if (isCdcRelevantDdl(statement.text)) {
+  if (!SCHEMA_WORD_RE.test(sql)) return conn.exec(sql)
+  for (const statement of splitMigrationScript(sql)) {
+    await executeAllowingColumnDrop(capture, schema, columnDropSql(statement.text), () => conn.exec(statement.text))
+    if (changesSchema(statement.tokens)) {
       await restoreMigrationCapture(capture, conn, createdTable(statement.tokens))
     }
   }
@@ -117,7 +131,7 @@ function statementKeepingCapture(
 ): SQLiteStatement {
   const created = createdTable(tokenizeSql(sql))
   return statementCallsAround(stmt, async call => {
-    const result = await call()
+    const result = await executeAllowingColumnDrop(capture, conn, columnDropSql(sql), call)
     await restoreMigrationCapture(capture, conn, created)
     return result
   })
@@ -130,5 +144,42 @@ function createdTable(tokens: readonly SqlToken[]): string | undefined {
   const qualified = tokens[at + 1]?.kind === 'punct' && tokens[at + 1]?.value === '.'
   if (qualified && tokens[at]?.lower !== 'main') return undefined
   const name = tokens[qualified ? at + 2 : at]
-  return name?.kind === 'word' ? name.value : undefined
+  return identifier(name)
+}
+
+function changesSchema(tokens: readonly SqlToken[]): boolean {
+  return ['create', 'alter', 'drop'].some(word => isKeyword(tokens[0], word))
+}
+
+function identifier(token: SqlToken | undefined): string | undefined {
+  if (token?.kind === 'word') return token.value
+  if (token?.kind === 'string' && token.value.startsWith("'")) return token.value.slice(1, -1).replaceAll("''", "'")
+  return undefined
+}
+
+function columnDropSql(sql: string): string {
+  const tokens = tokenizeSql(sql)
+  if (!isKeyword(tokens[0], 'alter') || !isKeyword(tokens[1], 'table')) return sql
+  const qualified = tokens[3]?.kind === 'punct' && tokens[3].value === '.'
+  const table = tokens[qualified ? 4 : 2]
+  if (table === undefined) return sql
+  const name = identifier(table)
+  if (name === undefined) return sql
+  const schema = qualified ? identifier(tokens[2]) : undefined
+  if (qualified && schema === undefined) return sql
+  const prefix = schema === undefined ? '' : `"${schema.replaceAll('"', '""')}".`
+  return `ALTER TABLE ${prefix}"${name.replaceAll('"', '""')}"${sql.slice(table.end)}`
+}
+
+export function migrationSchemaConnection(conn: SQLiteConnection): SQLiteConnection {
+  return {
+    ...conn,
+    prepare: sql =>
+      conn.prepare(
+        sql
+          .replace(/^PRAGMA (table_info|table_xinfo)\(/, 'PRAGMA main.$1(')
+          .replace(/(pragma_index_list|pragma_index_xinfo)\(\?\)/, "$1(?, 'main')"),
+      ),
+    exec: sql => conn.exec(sql.replace(/^(CREATE TRIGGER IF NOT EXISTS |DROP TRIGGER IF EXISTS )(?=")/, '$1main.')),
+  }
 }

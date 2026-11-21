@@ -1,7 +1,9 @@
 import 'fake-indexeddb/auto'
 import { readFile } from 'node:fs/promises'
+import BetterSqlite3 from 'better-sqlite3'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Database } from '../../../core/database.js'
+import type { Migration } from '../../../core/migrations/types.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import { waSqlite } from '../../../drivers/wa-sqlite/index.js'
 
@@ -76,6 +78,41 @@ afterAll(() => {
 })
 
 describe.skipIf(!webLocksPresent)('values through the wa-sqlite driver', () => {
+  it('refuses database calls inside migration callbacks without blocking the writer', async () => {
+    const db = await openCells()
+    const insert = "INSERT INTO cells VALUES (1, 'migration')"
+    const remove = 'DELETE FROM cells WHERE id=1'
+    const migrations: Migration[] = [
+      {
+        version: 1,
+        name: 'seed_cells',
+        withoutForeignKeys: true,
+        up: async tx => {
+          await expect(db.execute(insert)).rejects.toMatchObject({ code: 'WRITER_HELD_BY_CALLBACK' })
+          await tx.execute(insert)
+        },
+        down: async tx => {
+          await expect(db.query('SELECT * FROM cells')).rejects.toMatchObject({ code: 'WRITER_HELD_BY_CALLBACK' })
+          await tx.execute(remove)
+        },
+      },
+    ]
+    const oracle = new BetterSqlite3(':memory:')
+    try {
+      oracle.exec('CREATE TABLE cells (id INTEGER PRIMARY KEY, value)')
+      oracle.exec(insert)
+      await db.migrate(migrations)
+      expect(await db.query('SELECT * FROM cells')).toEqual(oracle.prepare('SELECT * FROM cells').all())
+      oracle.exec(remove)
+      await db.rollback(migrations)
+      expect(await db.query('SELECT * FROM cells')).toEqual(oracle.prepare('SELECT * FROM cells').all())
+      expect(await db.appliedMigrations()).toEqual([])
+      await db.execute(insert)
+    } finally {
+      oracle.close()
+    }
+  })
+
   it('stores every value that the caller binds, at the edges of each storage class, and reads each one back exactly', async () => {
     const db = await openCells()
     const written: unknown[] = [

@@ -101,12 +101,14 @@ export class DatabaseMigrationController {
 
   migrate(migrations: Migration[]): Promise<MigrationResult> {
     const { writerLock, pool, changeTracker, stamper } = this.deps
-    return writerLock.run(() => migrateWithTriggerRefresh(pool.acquireWriter(), changeTracker(), migrations, stamper()))
+    return writerLock.runCallback(() =>
+      migrateWithTriggerRefresh(pool.acquireWriter(), changeTracker(), migrations, stamper()),
+    )
   }
 
   rollback(migrations: Migration[], version?: number): Promise<RollbackResult> {
     const { writerLock, pool, changeTracker, stamper } = this.deps
-    return writerLock.run(() =>
+    return writerLock.runCallback(() =>
       rollbackWithTriggerRefresh(pool.acquireWriter(), changeTracker(), migrations, version, stamper()),
     )
   }

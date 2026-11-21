@@ -1,4 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
+import { isKeyword, tokenizeSql } from '../live/sql-tokens.js'
 
 /**
  * Holds one column of a table as `PRAGMA table_info` reports it.
@@ -169,8 +170,21 @@ export async function selectCapturedTableNames(
     "SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ? || tbl_name || '_insert'",
   )
   const rows = (await stmt.all(triggerPrefix)) as Array<{ tbl_name: string; sql: string | null }>
-  const writesChangeLog = `INSERT INTO "${changesTable}"`
-  return rows.filter(row => row.sql?.includes(writesChangeLog) === true).map(row => row.tbl_name)
+  return rows.filter(row => row.sql !== null && insertsInto(row.sql, changesTable)).map(row => row.tbl_name)
+}
+
+function insertsInto(sql: string, table: string): boolean {
+  const tokens = tokenizeSql(sql)
+  return tokens.some((token, at) => {
+    if (!isKeyword(token, 'insert') && !isKeyword(token, 'replace')) return false
+    const into = isKeyword(tokens[at + 1], 'or') ? at + 3 : at + 1
+    if (!isKeyword(tokens[into], 'into')) return false
+    const target = tokens[into + 1]
+    if (target?.kind === 'word') return target.lower === table.toLowerCase()
+    return (
+      target?.kind === 'string' && target.value.slice(1, -1).replaceAll("''", "'").toLowerCase() === table.toLowerCase()
+    )
+  })
 }
 
 /**

@@ -1,5 +1,6 @@
 import { MigrationError } from '../errors.js'
 import { SQLITE_USER_VERSION_MAX } from './baseline.js'
+import { runsWithoutForeignKeys } from './foreign-keys.js'
 import { MIGRATION_NAME_RE, type Migration } from './types.js'
 
 function isMigrationStep(step: unknown): boolean {
@@ -88,6 +89,18 @@ export function validateMigrations(migrations: Migration[]): Migration[] {
     if (m.withoutForeignKeys !== undefined && typeof m.withoutForeignKeys !== 'boolean') {
       throw new MigrationError(
         `Migration ${m.version}_${m.name} must leave withoutForeignKeys unset or set it to true or false`,
+        m.version,
+        'MIGRATION_VALIDATION_ERROR',
+      )
+    }
+
+    if (
+      m.withoutForeignKeys === true &&
+      typeof m.up === 'string' &&
+      !runsWithoutForeignKeys({ ...m, withoutForeignKeys: false }, m.up)
+    ) {
+      throw new MigrationError(
+        `Migration ${m.version}_${m.name} must put PRAGMA foreign_keys = OFF in its up SQL when withoutForeignKeys is true, because a device receives only the SQL`,
         m.version,
         'MIGRATION_VALIDATION_ERROR',
       )

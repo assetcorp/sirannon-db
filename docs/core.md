@@ -74,7 +74,7 @@ DROP TABLE customers;
 ALTER TABLE new_customers RENAME TO customers;
 ```
 
-A function migration does the same with `withoutForeignKeys: true`. A `PRAGMA foreign_keys = ON` inside the migration has no effect, because SQLite applies it only outside a transaction.
+A function migration does the same with `withoutForeignKeys: true`. If you set that flag on a string migration, include `PRAGMA foreign_keys = OFF` in its `up` SQL, because a device receives only the SQL. Sirannon rejects a string migration that sets the flag without the pragma with `MIGRATION_VALIDATION_ERROR`. A `PRAGMA foreign_keys = ON` inside the migration has no effect, because SQLite applies it only outside a transaction.
 
 A bundler such as Vite can inline `.sql` files as strings, so a bundled app can build the same set without filesystem access:
 

@@ -154,7 +154,8 @@ export async function checkpointWithoutCapturing(request: {
   onCheckpoint?: (result: CheckpointResult) => void
 }): Promise<void> {
   await request.runExclusive(async () => {
-    request.onCheckpoint?.(await checkpointLog(request.acquireWriter()))
+    const result = await checkpointLog(request.acquireWriter())
+    request.onCheckpoint?.(result)
   })
 }
 

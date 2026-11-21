@@ -10,7 +10,7 @@ Build an encrypted, networked SQLite service with connection pooling, change dat
 
 **Read the full documentation at [sirannon.sondelali.com/docs](https://sirannon.sondelali.com/docs).** Use this page to get started, and turn to the [guides](#documentation) for the detail. The benchmark harness that measures Sirannon against PostgreSQL 18 is under [`benchmarks/server`](https://github.com/assetcorp/sirannon-db/tree/main/benchmarks/server), where a Node load generator drives both engines and a Python step joins their results. The write-up generator rewrites [BENCHMARKS.md](https://github.com/assetcorp/sirannon-db/blob/main/BENCHMARKS.md) from the latest committed run.
 
-The core engine, server, client, primary-replica replication, and coordinator-backed failover are stable. Device sync and the Bun and Expo drivers are experimental.
+The core engine, server, client, device sync, primary-replica replication, coordinator-backed failover, and the Expo driver are stable. The Bun driver is experimental.
 
 > *sirannon* means 'gate-stream' in Sindarin.
 

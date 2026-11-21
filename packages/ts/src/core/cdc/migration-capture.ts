@@ -142,7 +142,7 @@ function createdTable(tokens: readonly SqlToken[]): string | undefined {
   let at = 2
   if (isKeyword(tokens[at], 'if') && isKeyword(tokens[at + 1], 'not') && isKeyword(tokens[at + 2], 'exists')) at += 3
   const qualified = tokens[at + 1]?.kind === 'punct' && tokens[at + 1]?.value === '.'
-  if (qualified && tokens[at]?.lower !== 'main') return undefined
+  if (qualified && identifier(tokens[at])?.toLowerCase() !== 'main') return undefined
   const name = tokens[qualified ? at + 2 : at]
   return identifier(name)
 }

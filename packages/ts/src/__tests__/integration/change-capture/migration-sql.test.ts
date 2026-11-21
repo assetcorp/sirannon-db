@@ -83,14 +83,14 @@ INSERT INTO Notes VALUES (2, 'second', '6');`,
     expect(changes(workspace.path('trigger-body')).map(row => row.row_id)).toEqual(['1', '2'])
   })
 
-  it('leaves copied rows out when CREATE TABLE uses a single-quoted identifier', async () => {
+  it('leaves copied rows out when CREATE TABLE quotes the schema and table identifiers', async () => {
     const db = await open('quoted')
     await db.migrate([
       {
         version: 1,
         name: 'quoted_copy',
         up: `ALTER TABLE [Notes] RENAME TO old_notes;
-CREATE TABLE 'Notes' (id INTEGER PRIMARY KEY, body TEXT, score INTEGER);
+CREATE TABLE 'MaIn'.'Notes' (id INTEGER PRIMARY KEY, body TEXT, score INTEGER);
 INSERT INTO Notes SELECT id, body, score FROM old_notes;
 DROP TABLE old_notes;
 INSERT INTO Notes VALUES (2, 'second', 6);`,

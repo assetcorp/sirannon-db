@@ -1,11 +1,16 @@
 import type { ChangeTracker } from './cdc/change-tracker.js'
-import { captureKeepingConnection, migrationCaptureTracker, restoreMigrationCapture } from './cdc/migration-capture.js'
+import {
+  captureKeepingConnection,
+  migrationCaptureTracker,
+  migrationSchemaConnection,
+  restoreMigrationCapture,
+} from './cdc/migration-capture.js'
 import type { ConnectionPool } from './connection-pool.js'
 import type { SQLiteConnection } from './driver/types.js'
 import { MIGRATIONS_TABLE } from './internal-tables.js'
 import { MigrationRunner } from './migrations/runner.js'
 import type { Migration, MigrationResult, RollbackResult } from './migrations/types.js'
-import type { SyncStamper } from './sync/stamper.js'
+import { SyncStamper } from './sync/stamper.js'
 import { type AppliedMigrationRow, selectAppliedMigrations, selectTableExists } from './system-catalog/index.js'
 import type { WriterLock } from './writer-lock.js'
 
@@ -16,7 +21,7 @@ async function refreshTriggersAfterSchemaChange(
 ): Promise<void> {
   if (capture) await restoreMigrationCapture(capture, conn)
   if (!tracker || tracker.watchedTables.size === 0) return
-  await tracker.refreshAllTriggersUsingConnection(conn)
+  await tracker.refreshAllTriggersUsingConnection(migrationSchemaConnection(conn))
 }
 
 /**
@@ -45,28 +50,38 @@ export async function migrateWithTriggerRefresh(
   migrations: Migration[],
   stamper: SyncStamper | null = null,
 ): Promise<MigrationResult> {
-  const capture = await migrationCaptureTracker(conn, tracker)
-  return MigrationRunner.run(migrationConnection(capture, conn, stamper), migrations, txConn =>
-    refreshTriggersAfterSchemaChange(tracker, capture, txConn),
-  )
+  const migration = migrationConnection(conn, tracker, stamper)
+  return MigrationRunner.run(migration.conn, migrations, migration.refresh)
 }
 
 function migrationConnection(
-  capture: ChangeTracker | null,
   conn: SQLiteConnection,
+  tracker: ChangeTracker | null,
   stamper: SyncStamper | null,
-): SQLiteConnection {
-  const aware = capture === null ? conn : captureKeepingConnection(capture, conn)
-  if (stamper === null) return aware
+): { conn: SQLiteConnection; refresh: (txConn: SQLiteConnection) => Promise<void> } {
+  const refreshers = new WeakMap<SQLiteConnection, () => Promise<void>>()
   return {
-    ...aware,
-    transaction: fn =>
-      aware.transaction(async txConn => {
-        await stamper.openStamps(txConn)
-        const value = await fn(txConn)
-        await stamper.claimWithoutStamping(txConn)
-        return value
-      }),
+    conn: {
+      ...conn,
+      transaction: fn =>
+        conn.transaction(async txConn => {
+          const capture = await migrationCaptureTracker(txConn, tracker)
+          const stamping = stamper ?? (capture === null ? null : await SyncStamper.init(txConn, capture.changeLogTable))
+          const aware = capture === null ? txConn : captureKeepingConnection(capture, txConn)
+          refreshers.set(aware, () => refreshTriggersAfterSchemaChange(tracker, capture, txConn))
+          try {
+            await stamping?.openStamps(txConn)
+            const value = await fn(aware)
+            await stamping?.claimWithoutStamping(txConn)
+            return value
+          } finally {
+            refreshers.delete(aware)
+          }
+        }),
+    },
+    refresh: async txConn => {
+      await refreshers.get(txConn)?.()
+    },
   }
 }
 
@@ -90,10 +105,8 @@ export async function rollbackWithTriggerRefresh(
   version?: number,
   stamper: SyncStamper | null = null,
 ): Promise<RollbackResult> {
-  const capture = await migrationCaptureTracker(conn, tracker)
-  return MigrationRunner.rollback(migrationConnection(capture, conn, stamper), migrations, version, txConn =>
-    refreshTriggersAfterSchemaChange(tracker, capture, txConn),
-  )
+  const migration = migrationConnection(conn, tracker, stamper)
+  return MigrationRunner.rollback(migration.conn, migrations, version, migration.refresh)
 }
 
 export async function readAppliedMigrations(conn: SQLiteConnection): Promise<AppliedMigrationRow[]> {

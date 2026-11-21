@@ -116,6 +116,9 @@ export {
   selectRolledBackChanges,
 } from './rolled-back-changes-table.js'
 export {
+  type ForeignKeyViolationRow,
+  foreignKeysEnabled,
+  foreignKeyViolations,
   type IndexColumnRow,
   type IndexListRow,
   indexColumns,

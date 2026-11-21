@@ -1006,6 +1006,7 @@ export interface Migration {
     name: string;
     up: string | ((tx: Transaction) => void | Promise<void>);
     version: number;
+    withoutForeignKeys?: boolean;
 }
 
 // @public

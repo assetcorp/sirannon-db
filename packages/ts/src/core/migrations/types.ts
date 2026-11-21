@@ -31,6 +31,13 @@ export interface Migration {
   down?: string | ((tx: Transaction) => void | Promise<void>)
   /** Marks this migration as a baseline, which a new database runs in place of the earlier versions. */
   baseline?: MigrationBaseline
+  /**
+   * Runs `up`, and `down` during a rollback, with foreign keys off, for a function migration that copies a table that
+   * a foreign key refers to. The runner turns foreign keys off before the migration's transaction, checks every
+   * foreign key before it commits, and turns them back on afterwards. A string migration needs no flag, because a
+   * `PRAGMA foreign_keys = OFF` statement anywhere in its SQL has the same effect.
+   */
+  withoutForeignKeys?: boolean
 }
 
 /** The migrations to apply, as an array or as a function that returns one.

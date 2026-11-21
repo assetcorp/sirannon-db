@@ -39,7 +39,7 @@ export function createEndpointTransport(settings: TransportSettings, baseUrl: st
   const encodedId = encodeURIComponent(databaseId)
 
   if (settings.transport === 'http') {
-    return new HttpTransport(`${base}/db/${encodedId}`, settings.headers)
+    return new HttpTransport(`${base}/db/${encodedId}`, settings.headers, settings.requestTimeout)
   }
 
   return new WebSocketTransport(`${toWsUrl(base)}/db/${encodedId}`, {

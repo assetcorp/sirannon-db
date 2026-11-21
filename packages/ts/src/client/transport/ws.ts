@@ -226,6 +226,8 @@ export class WebSocketTransport implements Transport {
   /**
    * Checkpoints the database's write-ahead log on the server and returns whether the checkpoint finished. The server
    * serves the checkpoint on its HTTP route only, so this sends one HTTP request to the same host and path.
+   *
+   * @returns Whether the checkpoint finished, with the frame counts that the server reports.
    */
   async checkpoint(): Promise<CheckpointResponse> {
     if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
@@ -239,6 +241,7 @@ export class WebSocketTransport implements Transport {
         this.requestTimeout,
         request.signal,
       )
+      if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport closed')
       return answer as CheckpointResponse
     } catch (err) {
       if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport closed')

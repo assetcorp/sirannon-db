@@ -9,7 +9,6 @@ import {
   closeLater,
   DATABASE_ID,
   INSERT_ORDER,
-  pause,
   recordingProxy,
   releaseClientServers,
   servedShop,
@@ -116,7 +115,7 @@ describe.each(TRANSPORTS)('checkpoint through the published client over %s', tra
     const db = client.database(DATABASE_ID)
 
     const pending = caught(db.checkpoint())
-    await pause(50)
+    await expect.poll(() => proxy.requestsTo('POST', /\/db\/shop\/checkpoint$/).length).toBe(1)
     client.close()
 
     expect((await pending).code).toBe('TRANSPORT_ERROR')
@@ -126,6 +125,23 @@ describe.each(TRANSPORTS)('checkpoint through the published client over %s', tra
     expect(queryAfterClose.name).not.toBe('resolved')
     expect([checkpointAfterClose.name, checkpointAfterClose.code]).toEqual([queryAfterClose.name, queryAfterClose.code])
     expect(proxy.requestsTo('POST', /\/db\/shop\/checkpoint$/)).toHaveLength(1)
+  })
+
+  it('fails with TIMEOUT when the server leaves a checkpoint unanswered, then accepts a later checkpoint', async () => {
+    const shop = await servedShop({ label: `checkpoint-timeout-${transport}`, customers: [] })
+    const proxy = await recordingProxy(shop.served.port)
+    proxy.answerWith(request => (request.path.endsWith('/checkpoint') ? { kind: 'stall' } : undefined))
+    const client = new SirannonClient(proxy.base, { transport, autoReconnect: false, requestTimeout: 1000 })
+    closeLater(() => client.close())
+    const db = client.database(DATABASE_ID)
+
+    expect((await caught(db.checkpoint())).code).toBe('TIMEOUT')
+    expect(proxy.requestsTo('POST', /\/db\/shop\/checkpoint$/)).toHaveLength(1)
+
+    proxy.answerWith(() => undefined)
+    expect(await db.checkpoint()).toEqual(EMPTIED)
+    expect(logBytes(shop.path)).toBe(0)
+    expect(storedCustomers(shop.path)).toEqual([])
   })
 })
 

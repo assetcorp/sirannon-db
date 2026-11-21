@@ -21,6 +21,9 @@ async function requestJson(url: string, init: RequestInit, timeoutMs: number, ca
   } catch (err) {
     clearTimeout(timer)
     cancel?.removeEventListener('abort', abort)
+    if (controller.signal.aborted && cancel?.aborted !== true) {
+      throw new RemoteError('TIMEOUT', `The response from ${url} took longer than ${timeoutMs}ms to arrive`)
+    }
     throw new RemoteError(
       'CONNECTION_ERROR',
       `Failed to connect to ${url}: ${err instanceof Error ? err.message : String(err)}`,

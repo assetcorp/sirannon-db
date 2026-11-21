@@ -106,10 +106,10 @@ export class DatabaseBackups extends DatabaseLifecycle {
    * writer lock, so the checkpoint waits for the writes in progress, and no
    * other write starts until it ends. A reader that holds part of the log can
    * stop the checkpoint before it finishes, so Sirannon tries up to three times
-   * and reports the last try. Each try reports busy at once when a reader holds
-   * the log, so a held reader keeps the writer for the 150 milliseconds between
-   * tries and no longer. A database without a write-ahead log reports an empty
-   * log.
+   * and reports the last try. Without backups, each try reports busy at once
+   * when a reader holds the log, so retries add 150 milliseconds of delay
+   * without waiting for the reader. A database without a write-ahead log
+   * reports an empty log.
    *
    * On a database opened with the `backups` option, the backup cycle runs every
    * checkpoint, because it has to capture the log first. This method then takes

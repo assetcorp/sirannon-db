@@ -1,4 +1,7 @@
+import { once } from 'node:events'
 import { copyFileSync, existsSync, statSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { Worker } from 'node:worker_threads'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
@@ -150,6 +153,56 @@ describe.each(WRITER_PLACEMENTS)('checkpoint with $label', ({ writerWorker }) =>
     expect(countRaw(path, 'notes')).toBe(ROWS)
     expect((await db.checkpoint()).emptied).toBe(true)
     expect(rowsInMainFileAlone(path)).toBe(ROWS)
+  })
+
+  it('reports busy when another checkpoint holds the lock and SQLite cannot report frame counts', async () => {
+    const { db, path } = await openNotes()
+    await db.checkpoint()
+    const reader = new BetterSqlite3(path, { readonly: true })
+    const probe = new BetterSqlite3(path)
+    reader.exec('BEGIN')
+    reader.prepare('SELECT count(*) FROM notes').get()
+    await db.execute('INSERT INTO notes (id, body) VALUES (?, ?)', [ROWS + 1, 'after the reader'])
+    const worker = new Worker(
+      `const { parentPort, workerData } = require('node:worker_threads')
+      const Sqlite = require(workerData.sqlite)
+      const connection = new Sqlite(workerData.path, { timeout: 2147483647 })
+      const result = connection.pragma('wal_checkpoint(TRUNCATE)')
+      connection.close()
+      parentPort.postMessage(result)`,
+      {
+        eval: true,
+        workerData: { path, sqlite: createRequire(import.meta.url).resolve('better-sqlite3') },
+      },
+    )
+    const finished = once(worker, 'message')
+    void finished.catch(() => {})
+    try {
+      await expect
+        .poll(() => probe.pragma('wal_checkpoint(PASSIVE)'), { timeout: 10_000 })
+        .toEqual([{ busy: 1, log: -1, checkpointed: -1 }])
+
+      expect(await db.checkpoint()).toEqual({
+        busy: true,
+        framesInLog: 0,
+        framesCheckpointed: 0,
+        emptied: false,
+      })
+      expect(logBytes(path)).toBeGreaterThan(0)
+      expect(rowsInMainFileAlone(path)).toBe(ROWS)
+      expect(await db.transaction(tx => tx.query('PRAGMA busy_timeout'))).toEqual([{ timeout: 5000 }])
+    } finally {
+      reader.exec('COMMIT')
+      reader.close()
+      probe.close()
+      try {
+        await finished
+      } finally {
+        await worker.terminate()
+      }
+    }
+    expect((await db.checkpoint()).emptied).toBe(true)
+    expect(rowsInMainFileAlone(path)).toBe(ROWS + 1)
   })
 })
 

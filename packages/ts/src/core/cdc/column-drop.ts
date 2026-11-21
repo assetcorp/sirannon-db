@@ -8,8 +8,15 @@ const ALTER_TABLE_START_RE = new RegExp(`${LEADING_COMMENTS_PATTERN}ALTER\\s+TAB
 const DROP_WORD_RE = /\bDROP\b/i
 const COLUMN_DROP_SAVEPOINT = 'sirannon_column_drop'
 
-interface ScriptStatement {
+/**
+ * One statement of a script, with its text and its tokens.
+ *
+ * @internal
+ */
+export interface ScriptStatement {
+  /** The statement's text, from the end of the statement before it up to and including its closing semicolon. */
   text: string
+  /** The statement's tokens, without whitespace and comments. */
   tokens: SqlToken[]
 }
 
@@ -107,29 +114,44 @@ function columnDropAwareStatement(
   sql: string,
   stmt: SQLiteStatement,
 ): SQLiteStatement {
-  const lifted = <T>(call: () => Promise<T>): Promise<T> => executeAllowingColumnDrop(tracker, conn, sql, call)
+  return statementCallsAround(stmt, call => executeAllowingColumnDrop(tracker, conn, sql, call))
+}
+
+/**
+ * Returns a view of a prepared statement whose every executing call, `run`, `all`, `get`, and each counted or raw
+ * variant that the statement has, goes through `around`.
+ *
+ * @param stmt - The prepared statement to wrap.
+ * @param around - Executes the call that it receives and returns what that call returns.
+ * @returns A statement that keeps every other member of `stmt`.
+ * @internal
+ */
+export function statementCallsAround(
+  stmt: SQLiteStatement,
+  around: <T>(call: () => Promise<T>) => Promise<T>,
+): SQLiteStatement {
   const { allRaw, allCounted, getCounted, allRawCounted } = stmt
   const wrapped: SQLiteStatement = {
     ...stmt,
-    run: (...params) => lifted(() => stmt.run(...params)),
-    all: <T>(...params: unknown[]) => lifted(() => stmt.all<T>(...params)),
-    get: <T>(...params: unknown[]) => lifted(() => stmt.get<T>(...params)),
+    run: (...params) => around(() => stmt.run(...params)),
+    all: <T>(...params: unknown[]) => around(() => stmt.all<T>(...params)),
+    get: <T>(...params: unknown[]) => around(() => stmt.get<T>(...params)),
   }
   if (allRaw) {
     wrapped.allRaw = <T>(...params: unknown[]) =>
-      lifted(() => allRaw.call<SQLiteStatement, unknown[], Promise<T[]>>(stmt, ...params))
+      around(() => allRaw.call<SQLiteStatement, unknown[], Promise<T[]>>(stmt, ...params))
   }
   if (allCounted) {
     wrapped.allCounted = <T>(...params: unknown[]) =>
-      lifted(() => allCounted.call<SQLiteStatement, unknown[], Promise<Counted<T[]>>>(stmt, ...params))
+      around(() => allCounted.call<SQLiteStatement, unknown[], Promise<Counted<T[]>>>(stmt, ...params))
   }
   if (getCounted) {
     wrapped.getCounted = <T>(...params: unknown[]) =>
-      lifted(() => getCounted.call<SQLiteStatement, unknown[], Promise<Counted<T | undefined>>>(stmt, ...params))
+      around(() => getCounted.call<SQLiteStatement, unknown[], Promise<Counted<T | undefined>>>(stmt, ...params))
   }
   if (allRawCounted) {
     wrapped.allRawCounted = <T>(...params: unknown[]) =>
-      lifted(() => allRawCounted.call<SQLiteStatement, unknown[], Promise<Counted<T[]>>>(stmt, ...params))
+      around(() => allRawCounted.call<SQLiteStatement, unknown[], Promise<Counted<T[]>>>(stmt, ...params))
   }
   return wrapped
 }
@@ -166,7 +188,14 @@ function columnDropTarget(tokens: readonly SqlToken[], tracker: ChangeTracker): 
   return tracker.watchedTableNamed(name.value)
 }
 
-function splitScript(sql: string): ScriptStatement[] {
+/**
+ * Returns the statements of a script, in order, keeping the body of a `CREATE TRIGGER` in one statement.
+ *
+ * @param sql - The script.
+ * @returns One entry per statement, each with its text and its tokens.
+ * @internal
+ */
+export function splitScript(sql: string): ScriptStatement[] {
   const statements: ScriptStatement[] = []
   let tokens: SqlToken[] = []
   let start = 0

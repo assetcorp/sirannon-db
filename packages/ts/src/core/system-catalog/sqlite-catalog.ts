@@ -151,6 +151,29 @@ export async function selectTriggerSql(conn: SQLiteConnection, trigger: string):
 }
 
 /**
+ * Returns the name of every table that carries an insert trigger named for it under `triggerPrefix`, whose stored
+ * statement writes into `changesTable`.
+ *
+ * @param conn - The connection to read the schema through.
+ * @param triggerPrefix - The name prefix of the change-capture triggers.
+ * @param changesTable - The change log that the triggers write to.
+ * @returns The stored table names, in schema order.
+ * @internal
+ */
+export async function selectCapturedTableNames(
+  conn: SQLiteConnection,
+  triggerPrefix: string,
+  changesTable: string,
+): Promise<string[]> {
+  const stmt = await conn.prepare(
+    "SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ? || tbl_name || '_insert'",
+  )
+  const rows = (await stmt.all(triggerPrefix)) as Array<{ tbl_name: string; sql: string | null }>
+  const writesChangeLog = `INSERT INTO "${changesTable}"`
+  return rows.filter(row => row.sql?.includes(writesChangeLog) === true).map(row => row.tbl_name)
+}
+
+/**
  * Returns the number of rows in a table.
  *
  * @param conn - The connection to read the table through.

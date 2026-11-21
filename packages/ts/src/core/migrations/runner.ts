@@ -140,7 +140,12 @@ export class MigrationRunner {
     return true
   }
 
-  static async rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult> {
+  static async rollback(
+    conn: SQLiteConnection,
+    migrations: Migration[],
+    version?: number,
+    afterRollback?: (txConn: SQLiteConnection) => Promise<void>,
+  ): Promise<RollbackResult> {
     if (version !== undefined && (!Number.isSafeInteger(version) || version < 0)) {
       throw new MigrationError(
         `Invalid rollback target version: ${version}`,
@@ -221,6 +226,7 @@ export class MigrationRunner {
         const rolledBackVersions = new Set(rollbackSet.map(r => r.version))
         const remaining = appliedRows.find(row => !rolledBackVersions.has(row.version))
         await mirrorSchemaVersion(txConn, remaining === undefined ? 0 : remaining.version)
+        if (afterRollback) await afterRollback(txConn)
 
         return { rolledBack: rolledBackEntries }
       }),

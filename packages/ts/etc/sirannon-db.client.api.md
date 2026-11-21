@@ -39,7 +39,7 @@ export class FieldMergeResolver implements ConflictResolver {
 
 // @public
 export class HttpTransport implements Transport {
-    constructor(baseUrl: string, headers?: Record<string, string>);
+    constructor(baseUrl: string, headers?: Record<string, string>, checkpointTimeout?: number);
     batch(sql: string, paramsBatch: Params[], writeConcern?: WriteConcern): Promise<BatchResponse>;
     // @internal (undocumented)
     readonly carriesReadConcern = true;

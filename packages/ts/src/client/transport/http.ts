@@ -9,6 +9,7 @@ import type {
   QueryResponse,
   TransactionResponse,
 } from '../../server/protocol.js'
+import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS, postJson } from '../http-json.js'
 import type { RemoteSubscription, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 
@@ -28,7 +29,18 @@ export class HttpTransport implements Transport {
   private readonly inFlight = new Set<AbortController>()
   private closed = false
 
-  constructor(baseUrl: string, headers?: Record<string, string>) {
+  /**
+   * Connects this transport to one database's HTTP routes.
+   *
+   * @param baseUrl - The URL of the database, including its `/db/{id}` path.
+   * @param headers - The headers to send with every request.
+   * @param checkpointTimeout - The checkpoint deadline in milliseconds, with zero disabling the deadline.
+   */
+  constructor(
+    baseUrl: string,
+    headers?: Record<string, string>,
+    private readonly checkpointTimeout: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, '')
     this.headers = {
       'content-type': 'application/json',
@@ -82,9 +94,31 @@ export class HttpTransport implements Transport {
     })
   }
 
-  /** Checkpoints the database's write-ahead log on the server and returns whether the checkpoint finished. */
+  /**
+   * Checkpoints the database's write-ahead log on the server within the configured checkpoint deadline.
+   *
+   * @returns Whether the checkpoint finished, with the frame counts that the server reports.
+   */
   async checkpoint(): Promise<CheckpointResponse> {
-    return this.post<CheckpointResponse>('/checkpoint', {})
+    if (this.closed) throw closedTransportError()
+    const request = new AbortController()
+    this.inFlight.add(request)
+    try {
+      const answer = await postJson(
+        `${this.baseUrl}/checkpoint`,
+        {},
+        this.headers,
+        this.checkpointTimeout,
+        request.signal,
+      )
+      if (this.closed) throw closedTransportError()
+      return answer as CheckpointResponse
+    } catch (err) {
+      if (this.closed) throw closedTransportError()
+      throw err
+    } finally {
+      this.inFlight.delete(request)
+    }
   }
 
   /** Executes a registered read by name and returns its rows. */

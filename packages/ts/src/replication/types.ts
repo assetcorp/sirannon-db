@@ -186,7 +186,7 @@ export interface CoordinatorModeConfig {
   votingDataBearingNodeIds?: string[]
   /** Holds the coordinator that stores primary authority, node sessions, group state, and the in-sync set. */
   coordinator: ClusterCoordinator
-  /** Sets how many milliseconds this node's session lasts before the node has to renew it. */
+  /** Sets how many milliseconds this node's session lasts before the node has to renew it. It also sets how long this node, once it takes the controller lease, waits before it promotes a replica over a primary whose live session it has not read, so give every node in the cluster the same value. */
   sessionTtlMs?: number
   /** Sets how many milliseconds an in-sync replica can leave a change unacknowledged before the primary removes it from the in-sync set, which defaults to 1000. Keep it well below the write-concern timeout, because a `majority` write waits for every in-sync replica until the primary removes the one that stalls. */
   maxReplicaLagMs?: number

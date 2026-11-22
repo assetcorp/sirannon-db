@@ -213,6 +213,12 @@ export class FailoverNodeProcess {
     return held
   }
 
+  async groupReads(action: 'hold' | 'release' | 'count'): Promise<number> {
+    const held = await this.request('groupReads', { action }, 10_000)
+    if (typeof held !== 'number') throw new Error(`${this.config.nodeId} reported held group reads as ${String(held)}`)
+    return held
+  }
+
   async reconnectTransport(): Promise<void> {
     await this.request('reconnectTransport', {}, 20_000)
   }

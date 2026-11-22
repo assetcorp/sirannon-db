@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs'
 import type { Database } from '../../core/database.js'
 import type { SQLiteConnection } from '../../core/driver/types.js'
 import type { LiveQuery } from '../../core/live/types.js'
@@ -7,9 +6,9 @@ import type { EtcdClusterCoordinator } from '../../replication/coordinator/etcd.
 import type { ReplicationEngine as ReplicationEngineType } from '../../replication/engine.js'
 import type { SirannonServer } from '../../server/index.js'
 import type { GrpcReplicationTransport as GrpcReplicationTransportType } from '../../transport/grpc/index.js'
+import { createFailoverCoordinator, groupReadHold, inSyncUpdateHold } from './cluster-node-coordinator.js'
 import { numberPayload, optionalArrayPayload, serializeError, stringPayload } from './cluster-node-payloads.js'
 import { handleTransportCommand, proxiedTransportClass } from './cluster-node-transport.js'
-import { CoordinatorCallHold } from './coordinator-call-hold.js'
 import { directoryDestination } from './directory-destination.js'
 import type { FailoverNodeConfig, SerializedError } from './node-process.js'
 import { serializeJson } from './node-process.js'
@@ -72,7 +71,6 @@ const SCHEMA = `
 
 const databaseId = config.groupId
 const recentErrors: unknown[] = []
-const inSyncUpdateHold = new CoordinatorCallHold()
 
 let running: RunningNode | null = null
 let liveItems: LiveQuery<{ id: number }> | null = null
@@ -100,31 +98,6 @@ process.on('SIGINT', () => {
   void stopAndExit()
 })
 
-function createCoordinator(): EtcdClusterCoordinator {
-  const timeouts = { dialTimeoutMs: 1_000, defaultCallTimeoutMs: 1_000 }
-  if (config.etcdAccess === 'insecure-test') {
-    return createEtcdCoordinator({
-      hosts: config.etcdHosts,
-      keyPrefix: config.keyPrefix,
-      allowInsecure: true,
-      ...timeouts,
-    })
-  }
-  if (config.etcdAccess === 'plain-http') {
-    return createEtcdCoordinator({ hosts: config.etcdHosts, keyPrefix: config.keyPrefix, ...timeouts })
-  }
-  const httpsHosts = config.etcdHosts.map(host => host.replace(/^http:/, 'https:'))
-  if (config.etcdAccess === 'https-without-credentials') {
-    return createEtcdCoordinator({ hosts: httpsHosts, keyPrefix: config.keyPrefix, ...timeouts })
-  }
-  return createEtcdCoordinator({
-    hosts: httpsHosts,
-    keyPrefix: config.keyPrefix,
-    credentials: { rootCertificate: readFileSync(config.caCertPath) },
-    ...timeouts,
-  })
-}
-
 function databaseOptions(coordinator: EtcdClusterCoordinator): DatabaseOptions | undefined {
   if (!config.backupDirectory) return undefined
   return {
@@ -146,25 +119,7 @@ function databaseOptions(coordinator: EtcdClusterCoordinator): DatabaseOptions |
 }
 
 async function startClusterNode(): Promise<RunningNode> {
-  const coordinator = createCoordinator()
-  const sendInSyncUpdate = coordinator.updateInSyncSet.bind(coordinator)
-  coordinator.updateInSyncSet = async input => {
-    await inSyncUpdateHold.pass(input)
-    return sendInSyncUpdate(input)
-  }
-  const sendAdmission = coordinator.admitNodeToInSyncSet.bind(coordinator)
-  coordinator.admitNodeToInSyncSet = async input => {
-    await inSyncUpdateHold.pass(input)
-    return sendAdmission(input)
-  }
-  if (config.dieAfterGroupCreate) {
-    const createGroup = coordinator.createReplicationGroupState.bind(coordinator)
-    coordinator.createReplicationGroupState = async input => {
-      const result = await createGroup(input)
-      process.kill(process.pid, 'SIGKILL')
-      return result
-    }
-  }
+  const coordinator = createFailoverCoordinator(createEtcdCoordinator, config)
   const conn: SQLiteConnection = await testDriver.open(config.dbPath)
   await conn.exec('PRAGMA journal_mode = WAL')
 
@@ -345,6 +300,10 @@ async function handleMessage(message: RequestMessage): Promise<void> {
     }
     if (command === 'heldInSyncUpdates') {
       sendResponse(id, true, inSyncUpdateHold.held())
+      return
+    }
+    if (command === 'groupReads') {
+      sendResponse(id, true, await groupReadHold.configure(stringPayload(payload, 'action')))
       return
     }
     if (command === 'reconnectTransport') {

@@ -22,6 +22,39 @@ function columns(path: string): unknown[] {
 }
 
 describe('a device following the server schema', () => {
+  it('preserves child rows when the server sends a parent-table copy as migration SQL', async () => {
+    const schema: Migration = {
+      version: 1,
+      name: 'create_notes_and_links',
+      up: `${CREATE_NOTES.up};
+CREATE TABLE links (id INTEGER PRIMARY KEY, note_id INTEGER REFERENCES notes(id) ON DELETE CASCADE);
+INSERT INTO notes VALUES (1, 'linked note');
+INSERT INTO links VALUES (1, 1);`,
+    }
+    const copy: Migration = {
+      version: 2,
+      name: 'copy_notes',
+      withoutForeignKeys: true,
+      up: `PRAGMA foreign_keys=OFF;
+CREATE TABLE replacement (id INTEGER PRIMARY KEY, body TEXT, pinned INTEGER);
+INSERT INTO replacement SELECT id, body, 1 FROM notes;
+DROP TABLE notes;
+ALTER TABLE replacement RENAME TO notes;`,
+    }
+    const server = await startSyncServer({ migrations: [schema, copy], watch: ['notes', 'links'] })
+    const device = await openDevice(server.url, { migrations: [schema], watch: ['notes', 'links'] })
+    const snapshots: string[] = []
+    const controller = device.sync({ tables: ['notes', 'links'], onResyncRequired: () => snapshots.push('snapshot') })
+    await controller.start()
+
+    expect((await controller.status()).schemaVersion).toBe(2)
+    expect(readSqlite(device.path, 'SELECT * FROM links')).toEqual([{ id: 1n, note_id: 1n }])
+    expect(readSqlite(device.path, 'SELECT * FROM notes')).toEqual([{ id: 1n, body: 'linked note', pinned: 1n }])
+    expect(history(device.path)).toEqual(history(server.path))
+    expect(snapshots).toEqual([])
+    await expect(device.db.execute('INSERT INTO links VALUES (2, 404)')).rejects.toThrow(/FOREIGN KEY/)
+  })
+
   it('migrates a device behind the server on start and pushes under the new schema', async () => {
     const server = await startSyncServer({ migrations: [CREATE_NOTES, ADD_FLAG] })
     const device = await openDevice(server.url, { migrations: [CREATE_NOTES] })

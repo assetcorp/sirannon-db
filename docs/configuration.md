@@ -307,7 +307,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `host` | `string` | `'0.0.0.0'` | Address this node listens on for replication traffic |
+| `host` | `string` | `'0.0.0.0'` | Address this node listens on for replication traffic. A host name binds every address that it resolves to, and the node refuses to start when one of them fails to bind |
 | `port` | `number` | `0` | Listen port; `0` takes an ephemeral one |
 | `tlsCert` | `string` | - | Path to this node's certificate |
 | `tlsKey` | `string` | - | Path to this node's private key |

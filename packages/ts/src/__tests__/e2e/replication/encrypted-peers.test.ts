@@ -10,6 +10,7 @@ import type { ReplicationErrorEvent } from '../../../replication/index.js'
 import { ReplicationMessage } from '../../../transport/grpc/generated/replication.js'
 import { builtSirannonSqliteBindingPath, SIRANNON_SQLITE_REQUIRED } from '../../helpers/sirannon-sqlite.js'
 import type { ManagedNode } from '../lib/factory.js'
+import { loopbackEndpoint } from '../lib/loopback.js'
 import { eventually, readRows, recordErrors } from '../lib/replication-scene.js'
 import { INSERT_ORDER, ORDERS_SCHEMA, PRIMARY, READY_DEADLINE_MS, REPLICA, ready, sceneForEachTest } from './harness.js'
 
@@ -84,7 +85,7 @@ interface OlderPeerOutcome {
 function dialAsOlderPeer(port: number, nodeId: string): Promise<OlderPeerOutcome> {
   const cert = handle.certs.certForNode(nodeId)
   const client = new Client(
-    `localhost:${port}`,
+    loopbackEndpoint(port),
     credentials.createSsl(
       readFileSync(handle.certs.caCertPath),
       readFileSync(cert.keyPath),

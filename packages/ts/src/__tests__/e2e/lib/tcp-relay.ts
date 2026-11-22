@@ -1,6 +1,5 @@
 import net from 'node:net'
-
-const LOOPBACK_HOST = '127.0.0.1'
+import { LOOPBACK_HOST } from './loopback.js'
 
 export interface RelayedSockets {
   readonly client: net.Socket

@@ -5,7 +5,8 @@
  */
 export interface GrpcReplicationOptions {
   /**
-   * Sets the address that the gRPC server binds to. Defaults to '0.0.0.0'.
+   * Sets the address that the gRPC server binds to. Defaults to '0.0.0.0'. A host name such as 'localhost' binds every
+   * address that the name resolves to, and the transport refuses to start when any one of them fails to bind.
    */
   host?: string
   /**

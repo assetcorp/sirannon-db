@@ -31,6 +31,34 @@ INSERT INTO notes SELECT id, body, CAST(score AS INTEGER) FROM notes_old;
 DROP TABLE notes_old;
 `
 
+const COPY_AFTER_INDEXING_THE_NEW_TABLE = `
+ALTER TABLE notes RENAME TO notes_old;
+CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, score INTEGER);
+CREATE INDEX notes_body ON notes(body);
+INSERT INTO notes SELECT id, body, CAST(score AS INTEGER) FROM notes_old;
+DROP TABLE notes_old;
+`
+
+const COPY_INTO_TWO_NEW_TABLES = `
+ALTER TABLE notes RENAME TO notes_old;
+ALTER TABLE tags RENAME TO tags_old;
+CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, score INTEGER);
+CREATE TABLE tags (id INTEGER PRIMARY KEY, note_id INTEGER NOT NULL, label TEXT NOT NULL);
+INSERT INTO notes SELECT id, body, CAST(score AS INTEGER) FROM notes_old;
+INSERT INTO tags SELECT id, note_id, label FROM tags_old;
+DROP TABLE notes_old;
+DROP TABLE tags_old;
+`
+
+const SQLITE_DOCUMENTED_REBUILD = `
+CREATE TABLE new_notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, score INTEGER);
+INSERT INTO new_notes SELECT id, body, CAST(score AS INTEGER) FROM notes;
+DROP TABLE notes;
+ALTER TABLE new_notes RENAME TO notes;
+CREATE INDEX notes_body ON notes(body);
+UPDATE notes SET body = 'written by the migration after the index' WHERE id = 2;
+`
+
 let workspace: Workspace
 
 beforeEach(() => {
@@ -176,6 +204,81 @@ ALTER TABLE notes_old RENAME TO notes;
       ['INSERT', '100'],
       ['INSERT', '4'],
     ])
+  })
+})
+
+describe('a migration that creates more schema before it copies rows into a new table', () => {
+  function loggedRowsOf(path: string, table: string): string[][] {
+    return readRaw<{ operation: string; row_id: string }>(
+      path,
+      'SELECT operation, row_id FROM _sirannon_changes WHERE table_name = ? ORDER BY seq',
+      [table],
+    ).map(change => [change.operation, change.row_id])
+  }
+
+  function rowCountOf(path: string, table: string): number {
+    return Number(readRaw<{ total: bigint }>(path, `SELECT COUNT(*) AS total FROM ${table}`)[0]?.total ?? -1)
+  }
+
+  it('leaves the copied rows out of the change log when the migration indexes the new table before the copy', async () => {
+    const db = await workspace.open('index-before-copy')
+    await seedNotes(db)
+
+    await db.migrate([{ version: 1, name: 'score_as_integer', up: COPY_AFTER_INDEXING_THE_NEW_TABLE }])
+    await db.execute("INSERT INTO notes VALUES (3, 'after the migration', 8)")
+
+    const path = workspace.path('index-before-copy')
+    expect(rowCountOf(path, 'notes')).toBe(3)
+    expect(loggedRowsOf(path, 'notes')).toEqual([
+      ['INSERT', '1'],
+      ['INSERT', '2'],
+      ['INSERT', '3'],
+    ])
+    expect(captureTriggersOf(path, 'notes')).toHaveLength(5)
+  })
+
+  it('leaves the copied rows of both tables out of the change log when the migration creates two tables before copying', async () => {
+    const db = await workspace.open('two-tables-then-copy')
+    await seedNotes(db)
+    await db.execute('CREATE TABLE tags (id INTEGER PRIMARY KEY, note_id INTEGER NOT NULL, label TEXT NOT NULL)')
+    await db.watch('tags')
+    await db.execute("INSERT INTO tags VALUES (10, 1, 'draft'), (11, 2, 'review')")
+
+    await db.migrate([{ version: 1, name: 'rebuild_notes_and_tags', up: COPY_INTO_TWO_NEW_TABLES }])
+    await db.execute("INSERT INTO notes VALUES (3, 'after the migration', 8)")
+    await db.execute("UPDATE tags SET label = 'published' WHERE id = 10")
+
+    const path = workspace.path('two-tables-then-copy')
+    expect(rowCountOf(path, 'notes')).toBe(3)
+    expect(rowCountOf(path, 'tags')).toBe(2)
+    expect(loggedRowsOf(path, 'notes')).toEqual([
+      ['INSERT', '1'],
+      ['INSERT', '2'],
+      ['INSERT', '3'],
+    ])
+    expect(loggedRowsOf(path, 'tags')).toEqual([
+      ['INSERT', '10'],
+      ['INSERT', '11'],
+      ['UPDATE', '10'],
+    ])
+    expect(captureTriggersOf(path, 'notes')).toHaveLength(5)
+    expect(captureTriggersOf(path, 'tags')).toHaveLength(5)
+  })
+
+  it("captures the migration's own write after the index when the migration follows SQLite's documented rebuild order", async () => {
+    const db = await workspace.open('documented-rebuild')
+    await seedNotes(db)
+
+    await db.migrate([{ version: 1, name: 'score_as_integer', up: SQLITE_DOCUMENTED_REBUILD }])
+
+    const path = workspace.path('documented-rebuild')
+    expect(rowCountOf(path, 'notes')).toBe(2)
+    expect(loggedRowsOf(path, 'notes')).toEqual([
+      ['INSERT', '1'],
+      ['INSERT', '2'],
+      ['UPDATE', '2'],
+    ])
+    expect(captureTriggersOf(path, 'notes')).toHaveLength(5)
   })
 })
 

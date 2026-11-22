@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { SyncAck, SyncBatch, SyncComplete, SyncRequest } from '../../../replication/index.js'
 import { specChecksum } from '../lib/device-sync-oracle.js'
 import type { ManagedNode } from '../lib/factory.js'
+import { loopbackEndpoint } from '../lib/loopback.js'
 import {
   errorsOf,
   eventually,
@@ -55,7 +56,7 @@ async function replicaOfFakeSource(
     config: {
       transportConfig: {
         localRole: 'replica',
-        endpoints: [`localhost:${source.port}`, ...extraEndpoints.map(port => `localhost:${port}`)],
+        endpoints: [loopbackEndpoint(source.port), ...extraEndpoints.map(loopbackEndpoint)],
       },
       ...config,
     },

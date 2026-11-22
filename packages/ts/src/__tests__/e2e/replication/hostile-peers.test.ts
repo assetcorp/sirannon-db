@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ReplicationBatch } from '../../../replication/index.js'
 import type { ManagedNode } from '../lib/factory.js'
+import { loopbackEndpoint } from '../lib/loopback.js'
 import { errorsOf, eventually, type Row, readRows, tableNames, tableRows } from '../lib/replication-scene.js'
 import {
   INSERT_ORDER,
@@ -43,7 +44,7 @@ async function replicaOfHostileSource(extraEndpoints: number[] = []): Promise<Ho
       maxClockDriftMs: DRIFT_LIMIT_MS,
       transportConfig: {
         localRole: 'replica',
-        endpoints: [`localhost:${source.port}`, ...extraEndpoints.map(port => `localhost:${port}`)],
+        endpoints: [loopbackEndpoint(source.port), ...extraEndpoints.map(loopbackEndpoint)],
       },
     },
   })

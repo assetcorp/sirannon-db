@@ -15,6 +15,7 @@ import { type ForwardResponse, ReplicationClient } from '../../../transport/grpc
 import { GrpcReplicationTransport } from '../../../transport/grpc/index.js'
 import type { NodeCert } from '../lib/certs.js'
 import { encodeHlc, specChecksum } from '../lib/device-sync-oracle.js'
+import { LOOPBACK_HOST, loopbackEndpoint } from '../lib/loopback.js'
 import { eventually, type ReplicationScene, type Row } from '../lib/replication-scene.js'
 
 export interface Received<T> {
@@ -45,7 +46,7 @@ export class RawPeer {
     listen: boolean,
   ) {
     this.transport = new GrpcReplicationTransport({
-      host: 'localhost',
+      host: LOOPBACK_HOST,
       ...(listen ? { port: 0 } : {}),
       tlsCert: identity.cert.certPath,
       tlsKey: identity.cert.keyPath,
@@ -129,7 +130,7 @@ export async function dialAsPeer(
 ): Promise<RawPeer> {
   const peer = new RawPeer(claimedNodeId, identity, false)
   scene.track(peer.transport)
-  await peer.transport.connect(claimedNodeId, { localRole: role, endpoints: [`localhost:${port}`] })
+  await peer.transport.connect(claimedNodeId, { localRole: role, endpoints: [loopbackEndpoint(port)] })
   return peer
 }
 
@@ -286,7 +287,7 @@ export function helloOutcome(
           readFileSync(identity.cert.keyPath),
           readFileSync(identity.cert.certPath),
         )
-  const client = new ReplicationClient(`localhost:${port}`, channelCredentials)
+  const client = new ReplicationClient(loopbackEndpoint(port), channelCredentials)
   const call = client.replicate()
   return new Promise<HelloOutcome>(resolve => {
     let settled = false
@@ -329,7 +330,7 @@ export interface ForwardOutcome {
 
 export function forwardWithoutJoining(port: number, identity: PeerIdentity, sql: string): Promise<ForwardOutcome> {
   const client = new ReplicationClient(
-    `localhost:${port}`,
+    loopbackEndpoint(port),
     credentials.createSsl(
       readFileSync(identity.caCertPath),
       readFileSync(identity.cert.keyPath),

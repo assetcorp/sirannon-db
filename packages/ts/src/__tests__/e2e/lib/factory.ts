@@ -12,6 +12,7 @@ import { GrpcReplicationTransport } from '../../../transport/grpc/index.js'
 import type { GrpcReplicationOptions } from '../../../transport/grpc/options.js'
 import { testDriver } from '../../helpers/test-driver.js'
 import type { MtlsCerts } from './certs.js'
+import { LOOPBACK_HOST } from './loopback.js'
 
 export interface ManagedNode {
   nodeId: string
@@ -125,7 +126,7 @@ export async function createPrimary(args: CreatePrimaryArgs): Promise<ManagedNod
   const cert = args.certs.certForNode(args.nodeId)
   const transport = new GrpcReplicationTransport({
     port: args.listenPort ?? 0,
-    host: 'localhost',
+    host: LOOPBACK_HOST,
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,
@@ -181,7 +182,7 @@ export async function createReplica(args: CreateReplicaArgs): Promise<ManagedNod
 
   const cert = args.certs.certForNode(args.nodeId)
   const transport = new GrpcReplicationTransport({
-    host: 'localhost',
+    host: LOOPBACK_HOST,
     tlsCert: cert.certPath,
     tlsKey: cert.keyPath,
     tlsCaCert: args.certs.caCertPath,

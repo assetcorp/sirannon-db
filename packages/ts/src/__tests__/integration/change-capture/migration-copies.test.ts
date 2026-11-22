@@ -282,6 +282,52 @@ describe('a migration that creates more schema before it copies rows into a new 
   })
 })
 
+describe.each(
+  PLACEMENTS,
+)('a migration that turns foreign keys off to copy a watched parent table, $label', placement => {
+  it('keeps the child rows, leaves the copied rows out of the change log, and captures the writes after the copy', async () => {
+    const name = 'foreign-keys-off-copy'
+    const db = await workspace.open(name, { writerWorker: placement.writerWorker }, placement.driver())
+    await seedNotes(db)
+    await db.execute(
+      'CREATE TABLE tags (id INTEGER PRIMARY KEY, note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE, label TEXT NOT NULL)',
+    )
+    await db.execute("INSERT INTO tags VALUES (10, 1, 'draft'), (11, 2, 'review')")
+
+    await db.migrate([
+      {
+        version: 1,
+        name: 'score_as_integer',
+        up: `
+PRAGMA defer_foreign_keys = ON;
+PRAGMA foreign_keys = OFF;
+CREATE TABLE new_notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL, score INTEGER);
+INSERT INTO new_notes SELECT id, body, CAST(score AS INTEGER) FROM notes;
+DROP TABLE notes;
+ALTER TABLE new_notes RENAME TO notes;
+UPDATE notes SET body = 'written by the migration after the copy' WHERE id = 2;
+PRAGMA foreign_keys = ON;
+PRAGMA defer_foreign_keys = OFF;
+`,
+      },
+    ])
+    await db.execute("INSERT INTO notes VALUES (3, 'after the migration', 8)")
+
+    const path = workspace.path(name)
+    expect(readRaw<{ id: bigint; note_id: bigint }>(path, 'SELECT id, note_id FROM tags ORDER BY id')).toEqual([
+      { id: 10n, note_id: 1n },
+      { id: 11n, note_id: 2n },
+    ])
+    expect(changesOf(path).map(change => [change.operation, change.row_id])).toEqual([
+      ['INSERT', '1'],
+      ['INSERT', '2'],
+      ['UPDATE', '2'],
+      ['INSERT', '3'],
+    ])
+    expect(captureTriggersOf(path, 'notes')).toHaveLength(5)
+  })
+})
+
 describe.each(PLACEMENTS)('a migration after a restart, before anything watches the table, $label', placement => {
   async function reopenedAfterRestart(name: string): Promise<Database> {
     const first = workspace.registry()

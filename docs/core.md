@@ -64,6 +64,18 @@ await db.migrate([
 ])
 ```
 
+Changing a column's type, or placing a new column between others, means copying the table into a new one. SQLite ignores `PRAGMA foreign_keys` inside a transaction, so with foreign keys on, dropping the old table would delete or clear every row that refers to it. Put `PRAGMA foreign_keys = OFF` anywhere among the statements of such a migration, as SQLite's own procedure for that change does. Sirannon then turns foreign keys off before the migration's transaction, checks every foreign key with `PRAGMA foreign_key_check` before it commits, and turns them back on afterwards. When a row refers to a parent row that the copy lost, the migration rolls back with `MIGRATION_ERROR`, and the error lists the first of those rows:
+
+```sql
+PRAGMA foreign_keys = OFF;
+CREATE TABLE new_customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, score INTEGER);
+INSERT INTO new_customers SELECT id, name, CAST(score AS INTEGER) FROM customers;
+DROP TABLE customers;
+ALTER TABLE new_customers RENAME TO customers;
+```
+
+A function migration does the same with `withoutForeignKeys: true`. If you set that flag on a string migration, include `PRAGMA foreign_keys = OFF` in its `up` SQL, because a device receives only the SQL. Sirannon rejects a string migration that sets the flag without the pragma with `MIGRATION_VALIDATION_ERROR`. A `PRAGMA foreign_keys = ON` inside the migration has no effect, because SQLite applies it only outside a transaction.
+
 A bundler such as Vite can inline `.sql` files as strings, so a bundled app can build the same set without filesystem access:
 
 ```ts

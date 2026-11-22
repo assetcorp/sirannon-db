@@ -1,7 +1,8 @@
-import type { Namespace, Watcher } from 'etcd3'
+import type { Namespace } from 'etcd3'
 import { CoordinatorError, NoSafePrimaryError } from '../errors.js'
 import { parseGroupState, parseNodeSession, serializeGroupState } from './etcd-codec.js'
 import { nodeSessionKey, replicationGroupKey } from './etcd-connection.js'
+import { assertReadFromWatchedCluster, connectEtcdWatch, type EtcdWatchers, followEtcdCluster } from './etcd-watches.js'
 import { assertRaiseFeatureLevelInput, nextFeatureLevelState } from './feature-level-rules.js'
 import { overwriteGroupInput } from './group-overwrite.js'
 import {
@@ -54,12 +55,16 @@ interface StoredGroupRecord {
   state: ReplicationGroupState
 }
 
-interface EtcdWriteResponse {
-  header: { revision: string }
+interface EtcdResponse {
+  header: { revision: string; cluster_id: string }
 }
 
-function storedAt(state: ReplicationGroupState, response: EtcdWriteResponse): ReplicationGroupState {
-  return { ...cloneReplicationGroupState(state), version: BigInt(response.header.revision) }
+function storedAt(state: ReplicationGroupState, response: EtcdResponse): ReplicationGroupState {
+  return {
+    ...cloneReplicationGroupState(state),
+    version: BigInt(response.header.revision),
+    storeId: response.header.cluster_id,
+  }
 }
 
 /**
@@ -78,7 +83,7 @@ function storedAt(state: ReplicationGroupState, response: EtcdWriteResponse): Re
 export class EtcdGroupStore {
   constructor(
     private readonly namespace: Namespace,
-    private readonly watchers: Set<Watcher>,
+    private readonly watchers: EtcdWatchers,
     private readonly onWatcherError: ((error: Error) => void) | undefined,
   ) {}
 
@@ -147,23 +152,39 @@ export class EtcdGroupStore {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(groupId, 'groupId')
     const key = replicationGroupKey(clusterId, groupId)
-    const etcdWatcher = await this.namespace.watch().key(key).create()
-    this.watchers.add(etcdWatcher)
-    etcdWatcher.on('put', kv => {
+    const report = (read: () => ReplicationGroupState): void => {
       try {
-        watcher(parseGroupState(kv.value.toString('utf8'), BigInt(kv.mod_revision)))
+        watcher(read())
       } catch (err: unknown) {
-        const wrappedErr = err instanceof Error ? err : new Error(String(err))
-        this.onWatcherError?.(wrappedErr)
+        this.onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
       }
-    })
-    etcdWatcher.on('error', err => {
-      this.onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
-    })
-    return async () => {
-      this.watchers.delete(etcdWatcher)
-      await etcdWatcher.cancel()
     }
+    return followEtcdCluster(
+      async reopening => {
+        const opened = await connectEtcdWatch(this.namespace.watch().key(key))
+        opened.watcher.on('put', kv => {
+          const stamp = { version: BigInt(kv.mod_revision), storeId: opened.clusterId }
+          report(() => parseGroupState(kv.value.toString('utf8'), stamp))
+        })
+        opened.watcher.on('error', err => {
+          this.onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
+        })
+        if (!reopening) return opened
+        try {
+          const stored = await this.readGroupRecord(key)
+          if (stored) {
+            assertReadFromWatchedCluster(opened, stored.state.storeId)
+            report(() => stored.state)
+          }
+        } catch (err: unknown) {
+          await opened.watcher.cancel().catch(() => undefined)
+          throw err
+        }
+        return opened
+      },
+      this.watchers,
+      this.onWatcherError,
+    )
   }
 
   async compareAndAdvancePrimaryTerm(
@@ -199,7 +220,13 @@ export class EtcdGroupStore {
       .then(this.namespace.put(key).value(nextRaw))
       .commit()
     if (result.succeeded) {
-      return { advanced: true, state: parseGroupState(nextRaw, BigInt(result.header.revision)) }
+      return {
+        advanced: true,
+        state: parseGroupState(nextRaw, {
+          version: BigInt(result.header.revision),
+          storeId: result.header.cluster_id,
+        }),
+      }
     }
 
     return { advanced: false, state: await this.getReplicationGroupState(input.clusterId, input.groupId) }
@@ -328,6 +355,9 @@ export class EtcdGroupStore {
     if (kv === undefined) return null
     const raw = kv.value.toString('utf8')
     if (raw === '') return null
-    return { raw, state: parseGroupState(raw, BigInt(kv.mod_revision)) }
+    return {
+      raw,
+      state: parseGroupState(raw, { version: BigInt(kv.mod_revision), storeId: response.header.cluster_id }),
+    }
   }
 }

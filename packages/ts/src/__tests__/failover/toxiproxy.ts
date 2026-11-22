@@ -36,6 +36,13 @@ export class ToxiproxyClient {
     })
   }
 
+  async setUpstream(proxyName: string, upstreamPort: number): Promise<void> {
+    await this.request(`/proxies/${encodeURIComponent(proxyName)}`, {
+      method: 'POST',
+      body: { upstream: `${this.hosts.upstreamHost}:${upstreamPort}` },
+    })
+  }
+
   async addLatency(proxyName: string, name: string, latencyMs: number): Promise<void> {
     for (const stream of ['downstream', 'upstream'] as const) {
       await this.request(`/proxies/${encodeURIComponent(proxyName)}/toxics`, {

@@ -44,7 +44,8 @@ export interface EtcdClusterCoordinatorOptions {
    */
   allowInsecure?: boolean
   /**
-   * Receives each error that an etcd watch reports or that a watch callback throws, and each lost lease, so that you
+   * Receives each error that an etcd watch reports or that a watch callback throws, each failed try to reopen a watch
+   * after etcd cancels it or after the client reaches a restored or new etcd cluster, and each lost lease, so that you
    * can log it or raise an alert.
    */
   onWatcherError?: (error: Error) => void

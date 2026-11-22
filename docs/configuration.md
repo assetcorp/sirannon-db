@@ -286,7 +286,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `dialTimeoutMs` | `number` | the etcd client's own default | Connection timeout in ms |
 | `defaultCallTimeoutMs` | `number` | - | Deadline applied to each coordinator call in ms |
 | `allowInsecure` | `boolean` | `false` | Allows plain-`http` endpoints; use it in tests only |
-| `onWatcherError` | `(error: Error) => void` | - | Called when a coordinator watcher fails |
+| `onWatcherError` | `(error: Error) => void` | - | Called when a coordinator watcher fails, and on each failed try to reopen a watch after etcd cancels it or after the client reaches a restored or new etcd cluster |
 
 ## `TransportConfig`
 

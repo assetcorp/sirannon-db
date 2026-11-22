@@ -27,6 +27,7 @@ const FailoverStatusSchema = v.object({
       currentPrimary: PrimarySchema,
       primaryTerm: v.string(),
       groupStateVersion: v.optional(v.string()),
+      groupStateStoreId: v.optional(v.string()),
       inSyncNodeIds: v.array(v.string()),
       repairingNodeIds: v.array(v.string()),
       faultedNodeIds: v.array(v.string()),

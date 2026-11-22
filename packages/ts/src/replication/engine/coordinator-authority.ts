@@ -74,17 +74,18 @@ export function applyCoordinatorState(engine: ReplicationEngine, next: Replicati
 }
 
 /**
- * Returns true when the engine holds a group state with a higher version than `next`, which means that the
- * coordinator produced `next` before the state that the engine holds.
+ * Returns true when the engine holds a group state from the same store as `next` with a higher version, which means
+ * that the coordinator produced `next` before the state that the engine holds. A state from another store, such as a
+ * restored or new etcd cluster, is never older, so the engine follows that store from its first state.
  *
  * @param next - A group state that the coordinator returned, or null when it holds no state for the group.
  * @param held - The group state that the engine holds, or null when it holds none.
- * @returns True when both states exist and `next` has the lower version.
+ * @returns True when both states exist, come from the same store, and `next` has the lower version.
  *
  * @internal
  */
 export function isOlderGroupState(next: ReplicationGroupState | null, held: ReplicationGroupState | null): boolean {
-  return next !== null && held !== null && next.version < held.version
+  return next !== null && held !== null && next.storeId === held.storeId && next.version < held.version
 }
 
 /**
@@ -357,6 +358,7 @@ export function getCoordinatorRuntimeStatus(engine: ReplicationEngine): Replicat
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
     primaryTerm: state.primaryTerm,
     groupStateVersion: state.version,
+    groupStateStoreId: state.storeId,
     inSyncNodeIds: [...state.inSyncNodeIds],
     drainingNodeIds: [...state.drainingNodeIds],
     repairingNodeIds: [...state.repairingNodeIds],

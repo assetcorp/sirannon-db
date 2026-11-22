@@ -302,6 +302,8 @@ export interface CoordinatorRuntimeStatus {
   primaryTerm: bigint
   /** Holds the version of the group state that this node holds, which is the highest version that it has read from the coordinator. */
   groupStateVersion: bigint
+  /** Identifies the coordinator store, such as the etcd cluster, that gave the group state that this node holds its version. */
+  groupStateStoreId: string
   /** Lists the nodes that are in sync with the primary. */
   inSyncNodeIds: string[]
   /** Lists the draining nodes, which are leaving service. */

@@ -1,4 +1,3 @@
-import type { Watcher } from 'etcd3'
 import { CoordinatorError } from '../errors.js'
 import { parseLeaseIdForEntry, parseNodeSession, type SerializedLease, serializeLease } from './etcd-codec.js'
 import {
@@ -15,6 +14,7 @@ import { EtcdLeaseRegistry, revokeLeaseQuietly } from './etcd-lease-registry.js'
 import { loadEtcd3Module } from './etcd-loader.js'
 import { registerEtcdNodeSession } from './etcd-session-registration.js'
 import { watchEtcdNodeSessions } from './etcd-session-watch.js'
+import { EtcdWatchers } from './etcd-watches.js'
 import { assertNonEmpty, assertPositiveTtl, cloneMetadata } from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
@@ -55,7 +55,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
   private connection: Promise<EtcdConnection> | null = null
   private readonly onWatcherError: ((error: Error) => void) | undefined
   private readonly leases: EtcdLeaseRegistry
-  private readonly watchers = new Set<Watcher>()
+  private readonly watchers = new EtcdWatchers()
 
   constructor(options: EtcdClusterCoordinatorOptions) {
     assertEtcdOptions(options)
@@ -292,12 +292,7 @@ export class EtcdClusterCoordinator implements ClusterCoordinator {
 
   /** Stops every watch, revokes every lease that this coordinator granted, and closes the etcd client. */
   async close(): Promise<void> {
-    const watcherCancels: Promise<void>[] = []
-    for (const watcher of this.watchers) {
-      watcherCancels.push(watcher.cancel())
-    }
-    this.watchers.clear()
-    await Promise.allSettled(watcherCancels)
+    await this.watchers.cancelAll()
 
     await this.leases.revokeAll()
     const connection = this.connection

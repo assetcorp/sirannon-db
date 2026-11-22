@@ -226,8 +226,10 @@ export interface ReplicationGroupState {
   inSyncMajorityTerm: bigint
   /** Holds the time, in milliseconds since the Unix epoch, of the last change to this state. */
   updatedAtMs: number
-  /** Holds the version that the coordinator gave this state when it stored it, which is higher for every later write to the group. A node keeps the state with the highest version that it has read, so that a reply which the coordinator sent before a later write cannot replace the state that the write produced. The etcd coordinator uses the revision at which etcd stored the group's record. */
+  /** Holds the version that the coordinator gave this state when it stored it, which is higher for every later write to the group in the same store. A node keeps the state with the highest version that it has read from one store, so that a reply which the coordinator sent before a later write cannot replace the state that the write produced. The etcd coordinator uses the revision at which etcd stored the group's record. */
   version: bigint
+  /** Identifies the store that gave this state its `version`. A node compares versions only between states from the same store, and it accepts a state from another store, such as an etcd cluster that an operator restored from a snapshot or built anew, whatever its version. The etcd coordinator uses the ID of the etcd cluster, and the in-memory coordinator uses an ID that each instance draws when it starts. */
+  storeId: string
 }
 
 /**

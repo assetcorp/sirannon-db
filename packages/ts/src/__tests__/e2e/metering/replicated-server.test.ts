@@ -9,6 +9,7 @@ import {
   createMtlsCerts,
   createPrimary,
   createReplica,
+  LOOPBACK_HOST,
   type ManagedNode,
   type MtlsCerts,
   stopNode,
@@ -113,7 +114,7 @@ async function startPair(engineDriver: () => SQLiteDriver): Promise<MeteredPair>
   const replicaNode = await createReplica({
     nodeId: REPLICA_ID,
     certs,
-    primaryHost: 'localhost',
+    primaryHost: LOOPBACK_HOST,
     primaryPort: primaryNode.port,
     registry: { sirannon: replicaRegistry, driver: engineDriver(), databaseId: DATABASE_ID },
     configOverrides: { writeForwarding: true },

@@ -14,4 +14,5 @@ export {
   type NodeStorage,
   stopNode,
 } from './factory.js'
+export { LOOPBACK_HOST, loopbackEndpoint } from './loopback.js'
 export { waitForPeerConnected, waitForReady, waitForReplica } from './waitForReplica.js'

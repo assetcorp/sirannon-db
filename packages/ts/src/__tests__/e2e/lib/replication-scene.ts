@@ -11,6 +11,7 @@ import type { GrpcReplicationOptions } from '../../../transport/grpc/options.js'
 import type { MtlsCerts } from './certs.js'
 import { createPrimary, createReplica, type ManagedNode, type NodeStorage, stopNode } from './factory.js'
 import { type FaultProxy, startFaultProxy } from './fault-proxy.js'
+import { LOOPBACK_HOST } from './loopback.js'
 
 const POLL_INTERVAL_MS = 10
 const DEFAULT_DEADLINE_MS = 15_000
@@ -152,7 +153,7 @@ export class ReplicationScene {
     const node = await createReplica({
       nodeId,
       certs: this.certs,
-      primaryHost: 'localhost',
+      primaryHost: LOOPBACK_HOST,
       primaryPort: options.port,
       storage: options.storage,
       configOverrides: options.config,

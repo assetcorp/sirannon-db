@@ -6,6 +6,14 @@ import {
   STATEMENT_HEAD_TOKENS,
   type StatementHeadToken,
 } from './sql-statement-head.js'
+import {
+  isWordPart,
+  isWordStart,
+  namedParameterEnd,
+  opensNamedParameter,
+  readDelimited,
+  skipQuoted,
+} from './sql-tokens.js'
 
 const SIRANNON_MESSAGE =
   "Access to internal tables is not permitted: identifiers beginning with '_sirannon' are reserved"
@@ -129,14 +137,6 @@ export function assertMigrationSqlAllowed(sql: string): void {
   if (reason) {
     throw new ForbiddenSqlError(reason)
   }
-}
-
-function isWordStart(c: string): boolean {
-  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_' || c >= '\u0080'
-}
-
-function isWordPart(c: string): boolean {
-  return isWordStart(c) || (c >= '0' && c <= '9') || c === '$'
 }
 
 interface StatementState {
@@ -307,6 +307,14 @@ function scan(sql: string, scope: GuardScope): string | null {
       continue
     }
 
+    if (opensNamedParameter(c)) {
+      const parameterError = headError({ kind: 'other', text: c }, state)
+      if (parameterError) return parameterError
+      i = namedParameterEnd(sql, i)
+      statementStart = false
+      continue
+    }
+
     if (isWordStart(c)) {
       let j = i + 1
       while (j < n && isWordPart(sql[j])) j++
@@ -327,39 +335,4 @@ function scan(sql: string, scope: GuardScope): string | null {
   }
 
   return null
-}
-
-function skipQuoted(sql: string, start: number, quote: string): number {
-  const n = sql.length
-  let i = start + 1
-  while (i < n) {
-    if (sql[i] === quote) {
-      if (sql[i + 1] === quote) {
-        i += 2
-        continue
-      }
-      return i + 1
-    }
-    i++
-  }
-  return n
-}
-
-function readDelimited(sql: string, start: number, quote: string): { value: string; next: number } {
-  const n = sql.length
-  let i = start + 1
-  let value = ''
-  while (i < n) {
-    if (sql[i] === quote) {
-      if (sql[i + 1] === quote) {
-        value += quote
-        i += 2
-        continue
-      }
-      return { value, next: i + 1 }
-    }
-    value += sql[i]
-    i++
-  }
-  return { value, next: n }
 }

@@ -177,6 +177,10 @@ END;`,
       'SAVEPOINT rebuild; CREATE TABLE refunds (id INTEGER); RELEASE rebuild',
       'CREATE TEMP TABLE staging AS SELECT * FROM orders; DROP TABLE staging',
       'CREATE TABLE temp.staging (id INTEGER)',
+      'SELECT $marker(/*); COMMIT; CREATE TABLE refunds (id INTEGER)',
+      "SELECT :marker(');BEGIN",
+      'SELECT @marker(--);CREATE TEMP TABLE staging (id INTEGER)',
+      'SELECT #marker(;CREATE/**/TRIGGER/**/t/**/BEGIN); END',
     ]
 
     for (const up of refusedUps) {

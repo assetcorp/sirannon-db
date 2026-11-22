@@ -132,7 +132,7 @@ The optional methods let a driver accelerate bulk work:
 |--------|----------|
 | `runBatch` | Runs `sql` once per parameter set, returning one `RunResult` each. |
 | `runBatchSummary` | Runs `sql` once per parameter set, returning a `BatchSummary` rather than per-row results, to bound memory. |
-| `runGroup` | Runs several independent units in one transaction, returning one outcome per unit in order. A unit that fails must not disturb the others. A unit statement marked `trusted` bypasses the reserved-identifier guard. |
+| `runGroup` | Runs several independent units in one transaction, returning one outcome per unit in order. A unit that fails must not disturb the others. A unit statement marked `trusted` bypasses the statement guard of [02-core.md](02-core.md#reserved-identifiers), including its transaction and temporary object rules, so that Sirannon's own savepoints and change-capture triggers run. |
 
 ```text
 RunResult      { changes: number, lastInsertRowId: number or bigint, rowsRead?: number, rowsWritten?: number }

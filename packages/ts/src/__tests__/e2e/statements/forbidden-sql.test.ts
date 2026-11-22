@@ -130,6 +130,58 @@ describe("statements that reach Sirannon's own tables, the SQLite catalogue, or 
     expect(readSqlite(path, 'SELECT id, body FROM notes ORDER BY id')).toEqual(notesBefore)
   })
 
+  it("refuses a caller's transaction control and temporary objects on every route of both transports, so the next caller's write commits", async () => {
+    const refused = [
+      'BEGIN',
+      'BEGIN IMMEDIATE',
+      'COMMIT',
+      'END TRANSACTION',
+      'ROLLBACK',
+      'SAVEPOINT caller',
+      'RELEASE caller',
+      'SELECT 1; BEGIN',
+      'CREATE TEMP VIEW notes AS SELECT 99 AS id, 0 AS body',
+      'CREATE TEMPORARY TABLE notes (id INTEGER, body TEXT)',
+      'CREATE TABLE temp.notes (id INTEGER, body TEXT)',
+      'CREATE TABLE "temp".notes (id INTEGER, body TEXT)',
+      'CREATE TRIGGER temp.notes_blank AFTER INSERT ON notes BEGIN UPDATE notes SET body = 0; END',
+      'DROP TABLE temp.notes',
+    ]
+    const schemaBefore = schemaRows()
+    const ws = await RawSocket.open(`${served.wsBase}/db/notes`)
+
+    let sent = 0
+    for (const sql of refused) {
+      for (const route of ['query', 'execute', 'transaction', 'batch', 'load']) {
+        const answer = await postJson(served.base, `/db/notes/${route}`, bodyFor(route, sql))
+        const reply = await ws.request({ id: `connection-state-${sent++}`, type: route, ...bodyFor(route, sql) })
+
+        expect([answer.status, errorCodeOf(answer.body)], `${route} ${sql}`).toEqual([403, 'FORBIDDEN_SQL'])
+        expect([reply.type, reply.error?.code], `${route} ${sql}`).toEqual(['error', 'FORBIDDEN_SQL'])
+      }
+    }
+
+    const written = await postJson(served.base, '/db/notes/execute', {
+      sql: INSERT_NOTE,
+      params: ['after the refusals'],
+    })
+    const stored = readSqlite<{ id: bigint; body: string }>(path, 'SELECT id, body FROM notes ORDER BY id').map(
+      row => ({
+        id: Number(row.id),
+        body: row.body,
+      }),
+    )
+    const read = await ws.request({ id: 'read-after', type: 'query', sql: 'SELECT id, body FROM notes ORDER BY id' })
+
+    expect(written.status).toBe(200)
+    expect(stored.map(row => row.body)).toEqual([
+      ...Array.from({ length: SEEDED_NOTES }, (_, index) => `note ${index}`),
+      'after the refusals',
+    ])
+    expect(read.data).toEqual({ rows: stored })
+    expect(schemaRows()).toEqual(schemaBefore)
+  })
+
   it('answers reads of the SQLite catalogue with what the file holds', async () => {
     const ws = await RawSocket.open(`${served.wsBase}/db/notes`)
     for (const table of ['temp_store_directory', 'data_store_directory', 'writable_schema', 'café_sirannon_archive']) {

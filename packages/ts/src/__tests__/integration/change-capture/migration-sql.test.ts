@@ -135,18 +135,21 @@ ALTER TABLE Notes RENAME TO;`,
     expect(changes(path).map(row => row.row_id)).toEqual(['1', '3'])
   })
 
-  it('keeps main capture independent of a temporary table with the same name', async () => {
+  it('refuses a migration that hides a table behind a temporary table of the same name, and applies none of it', async () => {
     const db = await open('temporary')
-    await db.migrate([
-      {
-        version: 1,
-        name: 'temporary_copy',
-        up: `CREATE TEMP TABLE Notes (temporary_value TEXT);
+    await expect(
+      db.migrate([
+        {
+          version: 1,
+          name: 'temporary_copy',
+          up: `CREATE TEMP TABLE Notes (temporary_value TEXT);
 INSERT INTO main.Notes VALUES (2, 'captured', '6');
 DROP TABLE temp.Notes;`,
-      },
-    ])
-    expect(changes(workspace.path('temporary')).map(row => row.row_id)).toEqual(['1', '2'])
+        },
+      ]),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+    expect(changes(workspace.path('temporary')).map(row => row.row_id)).toEqual(['1'])
+    expect(readRaw(workspace.path('temporary'), 'SELECT id FROM Notes ORDER BY id')).toEqual([{ id: 1n }])
   })
 
   it('keeps callback writes unstamped and concurrent writes outside the migration', async () => {

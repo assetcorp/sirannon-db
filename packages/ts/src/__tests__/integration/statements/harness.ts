@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import BetterSqlite3 from 'better-sqlite3'
+import type { Database } from '../../../core/database.js'
 import type { SQLiteDriver } from '../../../core/driver/types.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import type { SirannonOptions } from '../../../core/types.js'
@@ -48,6 +49,20 @@ export const DRIVER_PLACEMENTS = DRIVERS.flatMap(driverCase =>
     writerWorker: placement.writerWorker,
   })),
 )
+
+export type StatementEntryPoint = [label: string, call: (db: Database, sql: string) => Promise<unknown>]
+
+export const STATEMENT_ENTRY_POINTS: StatementEntryPoint[] = [
+  ['query', (db, sql) => db.query(sql)],
+  ['queryOne', (db, sql) => db.queryOne(sql)],
+  ['execute', (db, sql) => db.execute(sql)],
+  ['executeBatch', (db, sql) => db.executeBatch(sql, [[]])],
+  ['executeTransaction', (db, sql) => db.executeTransaction([{ sql: 'DELETE FROM notes WHERE id < 0' }, { sql }])],
+  ['transaction execute', (db, sql) => db.transaction(tx => tx.execute(sql))],
+  ['transaction query', (db, sql) => db.transaction(tx => tx.query(sql))],
+  ['transaction database execute', (db, sql) => db.transaction(() => db.execute(sql))],
+  ['bulkLoad', (db, sql) => db.bulkLoad(sql, [[]])],
+]
 
 export interface Workspace {
   path(name: string): string

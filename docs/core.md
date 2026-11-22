@@ -55,6 +55,8 @@ The [live queries guide](live-queries.md) covers the update kinds, the three cas
 
 Sirannon applies each numbered migration file once inside a transaction and records it in `_sirannon_migrations` with a checksum. Versions must be integers from 1 to 2,147,483,647 so that they fit `PRAGMA user_version`, which Sirannon sets to the highest applied version.
 
+Because Sirannon opens and commits the transaction, a pending migration's SQL may not hold `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, or `RELEASE`, and it may not create or drop a temporary table, view, index, or trigger, since that object would stay on the writer connection after the migration. Sirannon checks every pending migration before it applies the first one and fails with `FORBIDDEN_SQL` when one breaks either rule, so none of them applies. To rebuild a table, copy its rows into a regular table and drop that table before the migration ends. A migration that is already applied is exempt, so a database whose history holds one opens and migrates as before.
+
 ```txt
 migrations/
   001_create_users.up.sql

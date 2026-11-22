@@ -311,6 +311,20 @@ Every restart repeats that proof, because a restarted replica leaves the in-sync
 
 While a node is pending, the coordinator accepts only the removal of that node. The coordinator refuses to remove the current primary, and it refuses to remove a voter when that would leave fewer in-sync voters than a majority of the voters that remain. A pending voter counts in neither number, so you can always remove one, even from a group that has lost its majority. A removed node refuses reads and writes with `TOPOLOGY_ERROR`, and the primary stops sending it changes. When a voter change commits while a write waits for its majority, the primary acknowledges the write only once a majority of the new voters holds it.
 
+### Restoring etcd from a snapshot
+
+Each node keeps the newest group state that it has read. It orders those states by the etcd revision of the group's record, and it compares revisions only between states from the same etcd cluster, which it recognises by the cluster ID that etcd puts in every reply. A node therefore ignores a reply that etcd sent before a later write, and when it reaches a different etcd cluster, it follows that cluster from its first state without a restart.
+
+Restore etcd from a snapshot with `--bump-revision` and `--mark-compacted`, as the [etcd recovery guide](https://etcd.io/docs/v3.5/op-guide/recovery/) describes:
+
+```bash
+etcdutl snapshot restore snapshot.db --bump-revision 1000000000 --mark-compacted --data-dir /var/lib/etcd-restored
+```
+
+The bump keeps every revision of the restored cluster above the revisions that the nodes have already read, and marking those revisions compacted ends every watch that the nodes held, so that each node opens its watches again on the restored cluster. The guide sizes a bump of 1,000,000,000 to cover a snapshot that is a week old on a cluster that takes fewer than 1,500 writes per second.
+
+When the nodes reach an etcd cluster that holds none of their sessions, such as one that you built anew, each node registers its session again at its next renewal, which comes every third of its session TTL and at least one second apart. Until the primary's session is back, the controller finds no live primary, so it can promote an in-sync replica in its place.
+
 ### Upgrading a group from 0.4
 
 Upgrade a group that runs 0.4 one node at a time, and restart each node in place under the same `nodeId`, waiting for it to return to the in-sync set before you move to the next one. Under a steady stream of `majority` writes, a 0.4 primary can keep only itself in the in-sync set, so when it stops the controller can find no replica to promote, and writes fail with `NO_SAFE_PRIMARY` until the primary starts again on the new release with its rows in place. Once every node runs the new release, raise the group's feature level to 2 with `raiseFeatureLevel` on the coordinator, and start no 0.4 node after that.

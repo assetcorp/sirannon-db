@@ -42,7 +42,14 @@ interface RawKeyValue {
 }
 
 interface RangeResponse {
+  header?: { cluster_id?: string }
   kvs?: RawKeyValue[]
+}
+
+export interface StoredGroupAtRevision {
+  group: StoredGroup
+  modRevision: bigint
+  etcdClusterId: string
 }
 
 export class EtcdOracle {
@@ -57,12 +64,19 @@ export class EtcdOracle {
     return (await this.groupWithModRevision())?.group ?? null
   }
 
-  async groupWithModRevision(): Promise<{ group: StoredGroup; modRevision: bigint } | null> {
-    const kv = await this.readKey(
-      `clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(this.groupId)}`,
-    )
+  async groupWithModRevision(): Promise<StoredGroupAtRevision | null> {
+    const response = await this.range({
+      key: encode(
+        this.fullKey(`clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(this.groupId)}`),
+      ),
+    })
+    const kv = response.kvs?.[0]
     if (!kv) return null
-    return { group: storedGroupOf(kv.value), modRevision: BigInt(kv.mod_revision ?? '0') }
+    return {
+      group: storedGroupOf(decode(kv.value)),
+      modRevision: BigInt(kv.mod_revision ?? '0'),
+      etcdClusterId: response.header?.cluster_id ?? '',
+    }
   }
 
   async primaryHistory(): Promise<StoredPrimaryTerm[]> {

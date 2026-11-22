@@ -88,8 +88,20 @@ export function parseLeaseIdForEntry(kind: LeaseKind, raw: string): string | nul
   }
 }
 
+/**
+ * Holds where etcd stored a group record: the revision of the write and the ID of the etcd cluster.
+ *
+ * @internal
+ */
+export interface GroupStateStamp {
+  /** Holds the etcd revision at which etcd stored the record. */
+  version: bigint
+  /** Holds the ID of the etcd cluster that stored the record. */
+  storeId: string
+}
+
 export function serializeGroupState(state: ReplicationGroupState): string {
-  const { pendingVoterNodeIds, featureLevel, inSyncMajorityTerm, version, ...rest } = state
+  const { pendingVoterNodeIds, featureLevel, inSyncMajorityTerm, version, storeId, ...rest } = state
   const serialized: SerializedReplicationGroupState = {
     ...rest,
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
@@ -139,14 +151,15 @@ const SERIALIZED_GROUP_STATE_SCHEMA = v.object({
  * Reads a replication-group record that the etcd coordinator stored, in this release's format or an earlier one's.
  *
  * @param raw - The JSON text that etcd holds for the group.
- * @param version - The etcd revision at which etcd stored that text, which becomes the state's version.
+ * @param stamp - The etcd revision at which etcd stored that text and the ID of the etcd cluster that stored it, which
+ * become the state's `version` and `storeId`.
  * @returns The group state, with no pending voters, no faulted nodes, a durability point of 0, feature level 1, and
  * an in-sync majority term of 0 where the record omits them.
  * @throws CoordinatorError when the text is not a group record that this release can read.
  *
  * @internal
  */
-export function parseGroupState(raw: string, version: bigint): ReplicationGroupState {
+export function parseGroupState(raw: string, stamp: GroupStateStamp): ReplicationGroupState {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -176,6 +189,7 @@ export function parseGroupState(raw: string, version: bigint): ReplicationGroupS
     compatibility: cloneCompatibility(value.compatibility),
     featureLevel: value.featureLevel ?? FIRST_FEATURE_LEVEL,
     inSyncMajorityTerm: value.inSyncMajorityTerm !== undefined ? BigInt(value.inSyncMajorityTerm) : 0n,
-    version,
+    version: stamp.version,
+    storeId: stamp.storeId,
   }
 }

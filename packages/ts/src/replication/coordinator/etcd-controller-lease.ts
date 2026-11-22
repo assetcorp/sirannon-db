@@ -1,7 +1,14 @@
-import type { Namespace, Watcher } from 'etcd3'
+import type { Namespace } from 'etcd3'
 import { parseLease, serializeLease } from './etcd-codec.js'
 import { controllerLeaseKey, ttlMsToSeconds } from './etcd-connection.js'
 import { type EtcdLeaseRegistry, readLeaseAt, revokeLeaseQuietly } from './etcd-lease-registry.js'
+import {
+  assertReadFromWatchedCluster,
+  connectEtcdWatch,
+  type EtcdWatchers,
+  followEtcdCluster,
+  type OpenedEtcdWatch,
+} from './etcd-watches.js'
 import { cloneMetadata } from './group-rules.js'
 import type {
   AcquireControllerLeaseInput,
@@ -59,15 +66,11 @@ export async function watchEtcdControllerLease(
   namespace: Namespace,
   clusterId: string,
   watcher: ControllerLeaseWatcher,
-  watchers: Set<Watcher>,
+  watchers: EtcdWatchers,
   onWatcherError?: (error: Error) => void,
 ): Promise<CoordinatorWatchDisposer> {
   const key = controllerLeaseKey(clusterId)
-  let holder: CoordinatorLease | null = null
-  let reading = true
-  let changedWhileReading = false
-
-  const report = () => {
+  const report = (holder: CoordinatorLease | null) => {
     try {
       watcher(holder)
     } catch (err: unknown) {
@@ -75,44 +78,47 @@ export async function watchEtcdControllerLease(
     }
   }
 
-  const record = (next: CoordinatorLease | null) => {
-    holder = next
-    if (reading) {
-      changedWhileReading = true
-      return
+  const open = async (): Promise<OpenedEtcdWatch> => {
+    let holder: CoordinatorLease | null = null
+    let reading = true
+    let changedWhileReading = false
+    const record = (next: CoordinatorLease | null) => {
+      holder = next
+      if (reading) {
+        changedWhileReading = true
+        return
+      }
+      report(holder)
     }
-    report()
-  }
 
-  const etcdWatcher = await namespace.watch().key(key).create()
-  watchers.add(etcdWatcher)
+    const opened = await connectEtcdWatch(namespace.watch().key(key))
+    const etcdWatcher = opened.watcher
+    etcdWatcher.on('put', kv => {
+      record(parseLease(kv.value.toString('utf8')))
+    })
+    etcdWatcher.on('delete', () => {
+      record(null)
+    })
+    etcdWatcher.on('error', err => {
+      onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
+    })
 
-  etcdWatcher.on('put', kv => {
-    record(parseLease(kv.value.toString('utf8')))
-  })
-  etcdWatcher.on('delete', () => {
-    record(null)
-  })
-  etcdWatcher.on('error', err => {
-    onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
-  })
-
-  try {
-    const value = await namespace.get(key).string()
-    if (!changedWhileReading) {
-      holder = value ? parseLease(value) : null
+    try {
+      const response = await namespace.get(key).exec()
+      assertReadFromWatchedCluster(opened, response.header.cluster_id)
+      const value = response.kvs[0]?.value.toString('utf8')
+      if (!changedWhileReading) {
+        holder = value ? parseLease(value) : null
+      }
+    } catch (err: unknown) {
+      await etcdWatcher.cancel().catch(() => undefined)
+      throw err
     }
-  } catch (err: unknown) {
-    watchers.delete(etcdWatcher)
-    await etcdWatcher.cancel()
-    throw err
+
+    reading = false
+    report(holder)
+    return opened
   }
 
-  reading = false
-  report()
-
-  return async () => {
-    watchers.delete(etcdWatcher)
-    await etcdWatcher.cancel()
-  }
+  return followEtcdCluster(open, watchers, onWatcherError)
 }

@@ -160,6 +160,10 @@ With a filter, you receive each change in a row's membership of the set that the
 
 When a `REPLACE` deletes a stored row because the new row has the same primary key or the same value in a unique column, Sirannon calls the handler with a delete for that row before it calls the handler with the write. If your own `BEFORE` trigger on the table inserts or updates a row in the same statement and the `REPLACE` then deletes that row, Sirannon may report no delete for it.
 
+Migrations and rollbacks preserve capture on tables that another process or an earlier session watched. After each schema statement, Sirannon restores their capture triggers. For a table that the migration creates, Sirannon installs the triggers at the next statement that alters or drops a table, an index, a trigger, or a view, or at the end of that migration. A `CREATE` statement leaves every created table waiting, so a migration can create its tables and indexes before it copies rows into them. Sirannon excludes every write to that table during this interval from the change log, including copied rows, and captures writes after it installs the triggers.
+
+When you delete a row from a watched table, `_sirannon_changes` keeps the deleted row until the retention period that `cdcRetention` sets removes it.
+
 A live query holds the current result of a query and updates its rows from those same events:
 
 ```ts

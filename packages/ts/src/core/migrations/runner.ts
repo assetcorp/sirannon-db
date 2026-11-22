@@ -140,7 +140,12 @@ export class MigrationRunner {
     return true
   }
 
-  static async rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult> {
+  static async rollback(
+    conn: SQLiteConnection,
+    migrations: Migration[],
+    version?: number,
+    afterRollback?: (txConn: SQLiteConnection) => Promise<void>,
+  ): Promise<RollbackResult> {
     if (version !== undefined && (!Number.isSafeInteger(version) || version < 0)) {
       throw new MigrationError(
         `Invalid rollback target version: ${version}`,
@@ -215,6 +220,7 @@ export class MigrationRunner {
             )
           }
           await deleteStmt.run(entry.version)
+          if (afterRollback) await afterRollback(txConn)
           rolledBackEntries.push({ version: entry.version, name: entry.name })
         }
 

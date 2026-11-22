@@ -1,4 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
+import { isKeyword, tokenizeSql } from '../live/sql-tokens.js'
 
 /**
  * Holds one column of a table as `PRAGMA table_info` reports it.
@@ -148,6 +149,42 @@ export async function selectTriggerSql(conn: SQLiteConnection, trigger: string):
   const stmt = await conn.prepare("SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?")
   const row = (await stmt.get(trigger)) as { sql?: string | null } | undefined
   return row?.sql ?? null
+}
+
+/**
+ * Returns the name of every table that carries an insert trigger named for it under `triggerPrefix`, whose stored
+ * statement writes into `changesTable`.
+ *
+ * @param conn - The connection to read the schema through.
+ * @param triggerPrefix - The name prefix of the change-capture triggers.
+ * @param changesTable - The change log that the triggers write to.
+ * @returns The stored table names, in schema order.
+ * @internal
+ */
+export async function selectCapturedTableNames(
+  conn: SQLiteConnection,
+  triggerPrefix: string,
+  changesTable: string,
+): Promise<string[]> {
+  const stmt = await conn.prepare(
+    "SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ? || tbl_name || '_insert'",
+  )
+  const rows = (await stmt.all(triggerPrefix)) as Array<{ tbl_name: string; sql: string | null }>
+  return rows.filter(row => row.sql !== null && insertsInto(row.sql, changesTable)).map(row => row.tbl_name)
+}
+
+function insertsInto(sql: string, table: string): boolean {
+  const tokens = tokenizeSql(sql)
+  return tokens.some((token, at) => {
+    if (!isKeyword(token, 'insert') && !isKeyword(token, 'replace')) return false
+    const into = isKeyword(tokens[at + 1], 'or') ? at + 3 : at + 1
+    if (!isKeyword(tokens[into], 'into')) return false
+    const target = tokens[into + 1]
+    if (target?.kind === 'word') return target.lower === table.toLowerCase()
+    return (
+      target?.kind === 'string' && target.value.slice(1, -1).replaceAll("''", "'").toLowerCase() === table.toLowerCase()
+    )
+  })
 }
 
 /**

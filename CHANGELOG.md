@@ -1,3 +1,55 @@
+## 0.4.3 (2026-11-22)
+
+### 🚀 Features
+
+- **benchmarks:** bold the winning operating point at each in-flight limit in the concurrency tables ([3ebf321](https://github.com/assetcorp/sirannon-db/commit/3ebf321))
+- ⚠️  **core:** add a checkpoint method and refuse PRAGMA wal_checkpoint through query and execute ([a838c99](https://github.com/assetcorp/sirannon-db/commit/a838c99))
+
+### 🩹 Fixes
+
+- **backup:** checkpoint without an optional observer ([8d3f9ea](https://github.com/assetcorp/sirannon-db/commit/8d3f9ea))
+- **cdc:** keep change capture through migrations that copy a table or run after a restart ([baa45bc](https://github.com/assetcorp/sirannon-db/commit/baa45bc))
+- **cdc:** preserve capture across migration SQL forms ([b2639e1](https://github.com/assetcorp/sirannon-db/commit/b2639e1))
+- **cdc:** identify capture triggers by their insert target ([74b0f32](https://github.com/assetcorp/sirannon-db/commit/74b0f32))
+- **cdc:** decode quoted schema names during migration copies ([0bb089d](https://github.com/assetcorp/sirannon-db/commit/0bb089d))
+- **cdc:** keep created tables out of capture until a statement alters or drops schema ([d52eb7d](https://github.com/assetcorp/sirannon-db/commit/d52eb7d))
+- **ci:** require streaming support in every native VFS check ([fe0516c](https://github.com/assetcorp/sirannon-db/commit/fe0516c))
+- **ci:** isolate cancellation groups by pull request number ([956ebc6](https://github.com/assetcorp/sirannon-db/commit/956ebc6))
+- **client:** honour checkpoint deadlines on both transports ([2b95f5a](https://github.com/assetcorp/sirannon-db/commit/2b95f5a))
+- **client:** reject malformed checkpoint error responses ([c6f2f9a](https://github.com/assetcorp/sirannon-db/commit/c6f2f9a))
+- **controller:** wait one session lease length before replacing a primary whose session a new controller has not read ([4b5a686](https://github.com/assetcorp/sirannon-db/commit/4b5a686))
+- **controller:** measure the session wait with a monotonic clock ([ace9f68](https://github.com/assetcorp/sirannon-db/commit/ace9f68))
+- **coordinator:** keep the newest group state when coordinator replies arrive out of order ([5225c10](https://github.com/assetcorp/sirannon-db/commit/5225c10))
+- **coordinator:** follow a restored or new etcd cluster by its cluster ID ([5df1a01](https://github.com/assetcorp/sirannon-db/commit/5df1a01))
+- **coordinator:** refuse a session lease at or below the one-second renewal floor ([3ca8482](https://github.com/assetcorp/sirannon-db/commit/3ca8482))
+- **core:** preserve checkpoint contention and restore busy timeout ([d9679b4](https://github.com/assetcorp/sirannon-db/commit/d9679b4))
+- **grpc:** refuse to start a server that binds only some addresses of its host name ([593acd7](https://github.com/assetcorp/sirannon-db/commit/593acd7))
+- **migrations:** turn foreign keys off for a migration that copies a table ([8e785b3](https://github.com/assetcorp/sirannon-db/commit/8e785b3))
+- **migrations:** refresh capture after each down migration ([c5a13db](https://github.com/assetcorp/sirannon-db/commit/c5a13db))
+- **migrations:** claim captured changes after a restart ([fd6106e](https://github.com/assetcorp/sirannon-db/commit/fd6106e))
+- **migrations:** recognise quoted pragmas and byte-order marks ([f6ed46d](https://github.com/assetcorp/sirannon-db/commit/f6ed46d))
+- **migrations:** require SQL markers for device-safe foreign key flags ([f58cbbd](https://github.com/assetcorp/sirannon-db/commit/f58cbbd))
+- **migrations:** guard callbacks on drivers without async context ([7215ec5](https://github.com/assetcorp/sirannon-db/commit/7215ec5))
+- **migrations:** refuse calls into the database only while a function migration runs ([1356ded](https://github.com/assetcorp/sirannon-db/commit/1356ded))
+- **replication:** keep an operator's cleared repairing flag instead of re-marking the node during its rebuild ([18c5c15](https://github.com/assetcorp/sirannon-db/commit/18c5c15))
+- **replication:** require an acknowledgement after resetting peer progress ([7b1b0b4](https://github.com/assetcorp/sirannon-db/commit/7b1b0b4))
+- **replication:** fence cancelled repair copies across awaits ([9078e98](https://github.com/assetcorp/sirannon-db/commit/9078e98))
+- **replication:** check current acknowledgements before admitting replicas ([3730e3f](https://github.com/assetcorp/sirannon-db/commit/3730e3f))
+- **replication:** keep no rolled-back changes for a cancelled repair copy ([af5e908](https://github.com/assetcorp/sirannon-db/commit/af5e908))
+- **replication:** admit a replica after a full copy only on acknowledgements that name that copy ([7a36a1b](https://github.com/assetcorp/sirannon-db/commit/7a36a1b))
+- **replication:** settle pending admission before resetting a copy ([91d6a46](https://github.com/assetcorp/sirannon-db/commit/91d6a46))
+- **replication:** remove a copying joiner even when its pending admission fails ([796cfad](https://github.com/assetcorp/sirannon-db/commit/796cfad))
+- **transport:** redial a connection whose Hello stalls and find a silent one through keepalive ([fb348c7](https://github.com/assetcorp/sirannon-db/commit/fb348c7))
+- **transport:** preserve existing forwarded write deadlines ([0671290](https://github.com/assetcorp/sirannon-db/commit/0671290))
+
+### ⚠️  Breaking Changes
+
+- **core:** add a checkpoint method and refuse PRAGMA wal_checkpoint through query and execute  ([a838c99](https://github.com/assetcorp/sirannon-db/commit/a838c99))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.4.2 (2026-11-15)
 
 ### 🩹 Fixes

@@ -76,8 +76,11 @@ describe('where clients can read and write', () => {
     const second = itemRow(2, NODE_A, 'c-never-sees-it')
     await writeItemMajority(requireNode(env, NODE_A), second)
     await waitForInSyncSet(env, [NODE_A, NODE_B], 10_000)
-    const fromPrimary = await waitForReadableNodes(env, NODE_A, NODE_IDS, 10_000)
-    expect(fromPrimary.readEndpoints?.find(entry => entry.nodeId === NODE_C)?.readConcerns).toEqual(['local'])
+    await waitForReadableNodes(env, NODE_A, NODE_IDS, 10_000)
+    await waitForCondition(async () => {
+      const entries = (await clusterStatusOf(env, NODE_A)).readEndpoints ?? []
+      return entries.find(entry => entry.nodeId === NODE_C)?.readConcerns.join(',') === 'local'
+    }, 10_000)
 
     const majorityOnLagging = await postSql(env, NODE_C, 'query', {
       sql: SELECT_IDS,

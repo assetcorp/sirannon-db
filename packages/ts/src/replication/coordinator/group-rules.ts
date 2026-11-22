@@ -13,6 +13,7 @@ export const MIN_AUTOMATIC_FAILOVER_VOTERS = 3
 export const MAX_GROUP_VOTERS = 7
 export const FIRST_FEATURE_LEVEL = 1
 export const IN_SYNC_ACKNOWLEDGEMENT_FEATURE_LEVEL = 2
+const UNSTORED_GROUP_STATE_VERSION = 0n
 
 /**
  * Returns how many voters make up a majority of a group's voters.
@@ -377,6 +378,7 @@ export function buildReplicationGroupState(
     featureLevel,
     inSyncMajorityTerm: input.inSyncMajorityTerm ?? 0n,
     updatedAtMs: nowMs,
+    version: UNSTORED_GROUP_STATE_VERSION,
   })
 }
 

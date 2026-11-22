@@ -74,6 +74,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
   private readonly replicationGroupWatchers = new ReplicationGroupWatchers()
   private readonly nodeSessionWatchers = new NodeSessionWatchers()
   private readonly controllerLeaseWatchers = new ControllerLeaseWatchers()
+  private lastGroupStateVersion = 0n
 
   constructor(options: InMemoryClusterCoordinatorOptions = {}) {
     this.now = options.now ?? Date.now
@@ -201,6 +202,8 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
   }
 
   private storeGroup(state: ReplicationGroupState): ReplicationGroupState {
+    this.lastGroupStateVersion += 1n
+    state.version = this.lastGroupStateVersion
     this.replicationGroups.set(replicationGroupKey(state.clusterId, state.groupId), state)
     this.notifyReplicationGroupWatchers(state)
     return cloneReplicationGroupState(state)
@@ -339,9 +342,7 @@ export class InMemoryClusterCoordinator implements ClusterCoordinator {
     if (next === state) {
       return { changed: false, state: cloneReplicationGroupState(state) }
     }
-    this.replicationGroups.set(key, next)
-    this.notifyReplicationGroupWatchers(next)
-    return { changed: true, state: cloneReplicationGroupState(next) }
+    return { changed: true, state: this.storeGroup(next) }
   }
 
   private isLeaseLive(lease: CoordinatorLease): boolean {

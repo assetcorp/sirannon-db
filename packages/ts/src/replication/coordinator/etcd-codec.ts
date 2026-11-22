@@ -89,7 +89,7 @@ export function parseLeaseIdForEntry(kind: LeaseKind, raw: string): string | nul
 }
 
 export function serializeGroupState(state: ReplicationGroupState): string {
-  const { pendingVoterNodeIds, featureLevel, inSyncMajorityTerm, ...rest } = state
+  const { pendingVoterNodeIds, featureLevel, inSyncMajorityTerm, version, ...rest } = state
   const serialized: SerializedReplicationGroupState = {
     ...rest,
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
@@ -139,13 +139,14 @@ const SERIALIZED_GROUP_STATE_SCHEMA = v.object({
  * Reads a replication-group record that the etcd coordinator stored, in this release's format or an earlier one's.
  *
  * @param raw - The JSON text that etcd holds for the group.
+ * @param version - The etcd revision at which etcd stored that text, which becomes the state's version.
  * @returns The group state, with no pending voters, no faulted nodes, a durability point of 0, feature level 1, and
  * an in-sync majority term of 0 where the record omits them.
  * @throws CoordinatorError when the text is not a group record that this release can read.
  *
  * @internal
  */
-export function parseGroupState(raw: string): ReplicationGroupState {
+export function parseGroupState(raw: string, version: bigint): ReplicationGroupState {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -175,5 +176,6 @@ export function parseGroupState(raw: string): ReplicationGroupState {
     compatibility: cloneCompatibility(value.compatibility),
     featureLevel: value.featureLevel ?? FIRST_FEATURE_LEVEL,
     inSyncMajorityTerm: value.inSyncMajorityTerm !== undefined ? BigInt(value.inSyncMajorityTerm) : 0n,
+    version,
   }
 }

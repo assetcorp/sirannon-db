@@ -300,6 +300,8 @@ export interface CoordinatorRuntimeStatus {
   currentPrimary: ReplicationGroupState['currentPrimary']
   /** Holds the current primary's term. */
   primaryTerm: bigint
+  /** Holds the version of the group state that this node holds, which is the highest version that it has read from the coordinator. */
+  groupStateVersion: bigint
   /** Lists the nodes that are in sync with the primary. */
   inSyncNodeIds: string[]
   /** Lists the draining nodes, which are leaving service. */

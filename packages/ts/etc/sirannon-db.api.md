@@ -396,6 +396,8 @@ export type ChangeOperation = 'insert' | 'update' | 'delete';
 // @public
 export class ChangeTracker {
     constructor(options?: ChangeTrackerOptions);
+    // @internal
+    adoptTable(conn: SQLiteConnection, table: string): Promise<CaptureShape>;
     // @internal (undocumented)
     advanceToLatest(conn: SQLiteConnection): Promise<void>;
     // @internal (undocumented)
@@ -1015,6 +1017,7 @@ export interface Migration {
     name: string;
     up: string | ((tx: Transaction) => void | Promise<void>);
     version: number;
+    withoutForeignKeys?: boolean;
 }
 
 // @public
@@ -1044,7 +1047,7 @@ export interface MigrationResult {
 // @internal
 export class MigrationRunner {
     // (undocumented)
-    static rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult>;
+    static rollback(conn: SQLiteConnection, migrations: Migration[], version?: number, afterRollback?: (txConn: SQLiteConnection) => Promise<void>): Promise<RollbackResult>;
     // (undocumented)
     static run(conn: SQLiteConnection, migrations: Migration[], afterEachMigration?: (txConn: SQLiteConnection) => Promise<void>): Promise<MigrationResult>;
 }

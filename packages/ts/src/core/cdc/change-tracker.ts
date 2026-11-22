@@ -128,6 +128,24 @@ export class ChangeTracker {
   }
 
   /**
+   * Returns the current capture shape of a table and records the table as watched with that shape, without creating,
+   * dropping, or checking any trigger, for a table whose triggers another tracker or an earlier process installed.
+   *
+   * @param conn - The connection to read the schema through.
+   * @param table - The stored name of the table.
+   * @returns The shape, whose column list is empty when the table does not exist, in which case the method records
+   * nothing.
+   * @throws {@link CDCError} when a column name has a form that trigger SQL cannot hold.
+   * @internal
+   */
+  async adoptTable(conn: SQLiteConnection, table: string): Promise<CaptureShape> {
+    this.assertIdentifier(table, 'table name')
+    const shape = await this.readShape(conn, table)
+    if (shape.columns.length > 0) this.markWatched(table, shape)
+    return shape
+  }
+
+  /**
    * Rebuilds the change-capture triggers on `conn` for every watched table
    * whose columns or unique keys have changed, without opening a nested transaction.
    *

@@ -81,6 +81,21 @@ describe('migration versions', () => {
 })
 
 describe('migration names and bodies', () => {
+  it('refuses a foreign key flag that a device cannot receive through the migration SQL', async () => {
+    const { db, path } = await openDatabase()
+    const migration = hostile({ withoutForeignKeys: true })
+    const refused = db.migrate([createInvoices, migration])
+    await expect(refused).rejects.toMatchObject({
+      code: 'MIGRATION_VALIDATION_ERROR',
+      version: 2,
+      message: expect.stringContaining('a device receives only the SQL'),
+    })
+    expect(readFileState(path)).toEqual({ userVersion: 0, history: [], tables: [] })
+    await expectRefusedUntouched(db, path, [createInvoices, hostile({ withoutForeignKeys: 'false' })])
+    await db.migrate([createInvoices, { ...migration, up: `PRAGMA foreign_keys=OFF; ${migration.up}` }])
+    expect(readFileState(path)).toMatchObject({ userVersion: 2, tables: ['invoices', 'totals'] })
+  })
+
   it('refuses every name outside letters, digits, and underscores, including one that is no string', async () => {
     const { db, path } = await openDatabase()
     const names: unknown[] = [

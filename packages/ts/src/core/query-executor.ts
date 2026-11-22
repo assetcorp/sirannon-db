@@ -10,8 +10,8 @@ import {
 } from './driver/row-counts.js'
 import type { BatchSummary, SQLiteConnection } from './driver/types.js'
 import { QueryError, SirannonError } from './errors.js'
-import { assertSqlAllowed } from './internal-tables.js'
 import { guardedStatement, trustedStatement } from './prepared-statements.js'
+import { assertSqlAllowed } from './sql-guard.js'
 import type { BulkLoadResult, ExecuteResult, Params } from './types.js'
 
 export function bindParams(params?: Params): unknown[] {

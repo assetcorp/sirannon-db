@@ -1,5 +1,5 @@
 import type { SQLiteConnection, SQLiteStatement } from './driver/types.js'
-import { assertSqlAllowed } from './internal-tables.js'
+import { assertSqlAllowed } from './sql-guard.js'
 
 const STATEMENT_CACHE_CAPACITY = 128
 

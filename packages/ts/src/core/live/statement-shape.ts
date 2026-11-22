@@ -1,5 +1,5 @@
 import { CDCError } from '../errors.js'
-import { assertSqlAllowed } from '../internal-tables.js'
+import { assertSqlAllowed } from '../sql-guard.js'
 import { type SqlToken, tokenizeSql } from './sql-tokens.js'
 import type { ClausePositions, SelectItem, SortTerm, WindowBound } from './statement-clauses.js'
 import {

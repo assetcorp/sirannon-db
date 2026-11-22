@@ -1,6 +1,7 @@
 import type { SQLiteConnection } from '../driver/types.js'
 import { MigrationError, SirannonError } from '../errors.js'
 import { MIGRATIONS_TABLE } from '../internal-tables.js'
+import { assertMigrationSqlAllowed } from '../sql-guard.js'
 import {
   ensureMigrationsTable,
   prepareDeleteMigration,
@@ -104,6 +105,10 @@ export class MigrationRunner {
       }
       return planned
     })
+
+    for (const migration of pending) {
+      if (typeof migration.up === 'string') assertMigrationSqlAllowed(migration.up)
+    }
 
     for (const migration of pending) {
       const withoutForeignKeys = runsWithoutForeignKeys(migration, migration.up)
@@ -243,10 +248,9 @@ export class MigrationRunner {
 
     const downByVersion = new Map<number, Migration>()
     for (const entry of rollbackSet) {
-      downByVersion.set(
-        entry.version,
-        MigrationRunner.resolveDownMigration(inputByVersion.get(entry.version), entry.version),
-      )
+      const migration = MigrationRunner.resolveDownMigration(inputByVersion.get(entry.version), entry.version)
+      if (typeof migration.down === 'string') assertMigrationSqlAllowed(migration.down)
+      downByVersion.set(entry.version, migration)
     }
     if (!withoutForeignKeys && MigrationRunner.downsRunWithoutForeignKeys(downByVersion.values())) {
       throw new MigrationError(

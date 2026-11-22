@@ -2,7 +2,12 @@ import { selectMaxAssignedChangeSeq, selectPrimaryTermStart } from '../../core/s
 import { isGroupMember } from '../coordinator/group-rules.js'
 import type { ReplicationGroupState } from '../coordinator/types.js'
 import { CoordinatorError, TopologyError } from '../errors.js'
-import { applyCoordinatorState, errorDetails, hasCurrentPrimaryAuthorityFor } from './coordinator-authority.js'
+import {
+  applyCoordinatorState,
+  errorDetails,
+  hasCurrentPrimaryAuthorityFor,
+  isOlderGroupState,
+} from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { updateInSyncSetFromCurrent } from './in-sync-updates.js'
 
@@ -35,7 +40,7 @@ export function isLocalNodeRemoved(engine: ReplicationEngine): boolean {
 
 /**
  * Records a group state on the engine without passing it to the demotion handler, for a state that this node wrote
- * itself.
+ * itself, unless the engine holds a state with a higher version.
  *
  * @param engine - The node's engine.
  * @param state - The group state that the coordinator returned.
@@ -43,6 +48,7 @@ export function isLocalNodeRemoved(engine: ReplicationEngine): boolean {
  * @internal
  */
 export function keepCoordinatorState(engine: ReplicationEngine, state: ReplicationGroupState): void {
+  if (isOlderGroupState(state, engine.coordinatorState)) return
   engine.coordinatorState = state
   engine.coordinatorAuthority = hasCurrentPrimaryAuthorityFor(engine, state)
 }

@@ -1,7 +1,8 @@
-import type { Namespace, Watcher } from 'etcd3'
+import type { Namespace } from 'etcd3'
 import { CoordinatorError, NoSafePrimaryError } from '../errors.js'
 import { parseGroupState, parseNodeSession, serializeGroupState } from './etcd-codec.js'
 import { nodeSessionKey, replicationGroupKey } from './etcd-connection.js'
+import { assertReadFromWatchedCluster, connectEtcdWatch, type EtcdWatchers, followEtcdCluster } from './etcd-watches.js'
 import { assertRaiseFeatureLevelInput, nextFeatureLevelState } from './feature-level-rules.js'
 import { overwriteGroupInput } from './group-overwrite.js'
 import {
@@ -49,6 +50,23 @@ interface GroupTransitionResult {
   state: ReplicationGroupState | null
 }
 
+interface StoredGroupRecord {
+  raw: string
+  state: ReplicationGroupState
+}
+
+interface EtcdResponse {
+  header: { revision: string; cluster_id: string }
+}
+
+function storedAt(state: ReplicationGroupState, response: EtcdResponse): ReplicationGroupState {
+  return {
+    ...cloneReplicationGroupState(state),
+    version: BigInt(response.header.revision),
+    storeId: response.header.cluster_id,
+  }
+}
+
 /**
  * Stores the replication group state in etcd for the etcd coordinator.
  * {@link EtcdGroupStore.setReplicationGroupState} overwrites the stored value.
@@ -65,14 +83,16 @@ interface GroupTransitionResult {
 export class EtcdGroupStore {
   constructor(
     private readonly namespace: Namespace,
-    private readonly watchers: Set<Watcher>,
+    private readonly watchers: EtcdWatchers,
     private readonly onWatcherError: ((error: Error) => void) | undefined,
   ) {}
 
   async setReplicationGroupState(input: SetReplicationGroupStateInput): Promise<ReplicationGroupState> {
     const state = buildReplicationGroupState(overwriteGroupInput(input))
-    await this.namespace.put(replicationGroupKey(input.clusterId, input.groupId)).value(serializeGroupState(state))
-    return cloneReplicationGroupState(state)
+    const response = await this.namespace
+      .put(replicationGroupKey(input.clusterId, input.groupId))
+      .value(serializeGroupState(state))
+    return storedAt(state, response)
   }
 
   async createReplicationGroupState(input: SetReplicationGroupStateInput): Promise<CreateReplicationGroupStateResult> {
@@ -83,7 +103,7 @@ export class EtcdGroupStore {
       .then(this.namespace.put(key).value(serializeGroupState(state)))
       .commit()
     if (result.succeeded) {
-      return { created: true, state: cloneReplicationGroupState(state) }
+      return { created: true, state: storedAt(state, result) }
     }
     return { created: false, state: await this.getReplicationGroupState(input.clusterId, input.groupId) }
   }
@@ -121,8 +141,7 @@ export class EtcdGroupStore {
   async getReplicationGroupState(clusterId: string, groupId: string): Promise<ReplicationGroupState | null> {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(groupId, 'groupId')
-    const value = await this.namespace.get(replicationGroupKey(clusterId, groupId)).string()
-    return value ? parseGroupState(value) : null
+    return (await this.readGroupRecord(replicationGroupKey(clusterId, groupId)))?.state ?? null
   }
 
   async watchReplicationGroup(
@@ -133,23 +152,39 @@ export class EtcdGroupStore {
     assertNonEmpty(clusterId, 'clusterId')
     assertNonEmpty(groupId, 'groupId')
     const key = replicationGroupKey(clusterId, groupId)
-    const etcdWatcher = await this.namespace.watch().key(key).create()
-    this.watchers.add(etcdWatcher)
-    etcdWatcher.on('put', kv => {
+    const report = (read: () => ReplicationGroupState): void => {
       try {
-        watcher(parseGroupState(kv.value.toString('utf8')))
+        watcher(read())
       } catch (err: unknown) {
-        const wrappedErr = err instanceof Error ? err : new Error(String(err))
-        this.onWatcherError?.(wrappedErr)
+        this.onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
       }
-    })
-    etcdWatcher.on('error', err => {
-      this.onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
-    })
-    return async () => {
-      this.watchers.delete(etcdWatcher)
-      await etcdWatcher.cancel()
     }
+    return followEtcdCluster(
+      async reopening => {
+        const opened = await connectEtcdWatch(this.namespace.watch().key(key))
+        opened.watcher.on('put', kv => {
+          const stamp = { version: BigInt(kv.mod_revision), storeId: opened.clusterId }
+          report(() => parseGroupState(kv.value.toString('utf8'), stamp))
+        })
+        opened.watcher.on('error', err => {
+          this.onWatcherError?.(err instanceof Error ? err : new Error(String(err)))
+        })
+        if (!reopening) return opened
+        try {
+          const stored = await this.readGroupRecord(key)
+          if (stored) {
+            assertReadFromWatchedCluster(opened, stored.state.storeId)
+            report(() => stored.state)
+          }
+        } catch (err: unknown) {
+          await opened.watcher.cancel().catch(() => undefined)
+          throw err
+        }
+        return opened
+      },
+      this.watchers,
+      this.onWatcherError,
+    )
   }
 
   async compareAndAdvancePrimaryTerm(
@@ -161,11 +196,11 @@ export class EtcdGroupStore {
     assertNonEmpty(input.nextPrimary.nodeId, 'nextPrimary.nodeId')
 
     const key = replicationGroupKey(input.clusterId, input.groupId)
-    const currentRaw = await this.namespace.get(key).string()
-    if (!currentRaw) {
+    const stored = await this.readGroupRecord(key)
+    if (!stored) {
       return { advanced: false, state: null }
     }
-    const current = parseGroupState(currentRaw)
+    const { raw: currentRaw, state: current } = stored
     if (current.primaryTerm !== input.expectedPrimaryTerm) {
       return { advanced: false, state: current }
     }
@@ -185,7 +220,13 @@ export class EtcdGroupStore {
       .then(this.namespace.put(key).value(nextRaw))
       .commit()
     if (result.succeeded) {
-      return { advanced: true, state: parseGroupState(nextRaw) }
+      return {
+        advanced: true,
+        state: parseGroupState(nextRaw, {
+          version: BigInt(result.header.revision),
+          storeId: result.header.cluster_id,
+        }),
+      }
     }
 
     return { advanced: false, state: await this.getReplicationGroupState(input.clusterId, input.groupId) }
@@ -288,11 +329,11 @@ export class EtcdGroupStore {
   ): Promise<GroupTransitionResult> {
     const key = replicationGroupKey(clusterId, groupId)
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt++) {
-      const storedRaw = await this.namespace.get(key).string()
-      if (!storedRaw) {
+      const stored = await this.readGroupRecord(key)
+      if (!stored) {
         return { changed: false, state: null }
       }
-      const state = parseGroupState(storedRaw)
+      const { raw: storedRaw, state } = stored
       const next = recordInSyncMajority(mutate(state))
       if (next === state) {
         return { changed: false, state: cloneReplicationGroupState(state) }
@@ -302,9 +343,21 @@ export class EtcdGroupStore {
         .then(this.namespace.put(key).value(serializeGroupState(next)))
         .commit()
       if (result.succeeded) {
-        return { changed: true, state: cloneReplicationGroupState(next) }
+        return { changed: true, state: storedAt(next, result) }
       }
     }
     throw new CoordinatorError(`Failed to update replication group '${groupId}' after concurrent coordinator writes`)
+  }
+
+  private async readGroupRecord(key: string): Promise<StoredGroupRecord | null> {
+    const response = await this.namespace.get(key).exec()
+    const kv = response.kvs[0]
+    if (kv === undefined) return null
+    const raw = kv.value.toString('utf8')
+    if (raw === '') return null
+    return {
+      raw,
+      state: parseGroupState(raw, { version: BigInt(kv.mod_revision), storeId: response.header.cluster_id }),
+    }
   }
 }

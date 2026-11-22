@@ -47,20 +47,23 @@ export function effectiveTopologyRole(engine: ReplicationEngine): TopologyRole {
 
 /**
  * Returns true when a group state that this node read from the coordinator names another node as primary in a later
- * term than the one in which this node held primary duty. The function records the state on the engine in every case,
- * while it passes only such a state to the engine's demotion handler.
+ * term than the one in which this node held primary duty. The function records the state on the engine unless the
+ * engine holds a state with a higher version, and it passes only a state that names such a primary to the engine's
+ * demotion handler.
  *
  * The group watch, a session restore, and every refresh call this function, so that the node notices its own demotion
- * whichever of those reads returns the later term first.
+ * whichever of those reads returns the later term first. Those reads can return in any order, and the version check
+ * keeps a reply that the coordinator sent before a later write from replacing the state that the write produced.
  *
  * @param engine - The engine that keeps the group state and the authority flag.
  * @param next - The group state that the coordinator returned, or null when it holds no state for the group.
- * @returns True when the state names another primary in a later term, and false otherwise.
+ * @returns True when the engine records a state that names another primary in a later term, and false otherwise.
  */
 export function applyCoordinatorState(engine: ReplicationEngine, next: ReplicationGroupState | null): boolean {
   const previous = engine.coordinatorState
   const wasPrimary = previous ? hasCurrentPrimaryAuthorityFor(engine, previous) : engine.coordinatorAuthority
   noteCoordinatorContact(engine)
+  if (isOlderGroupState(next, previous)) return false
   engine.coordinatorState = next
   engine.coordinatorAuthority = next ? hasCurrentPrimaryAuthorityFor(engine, next) : false
   engine.peerTracker.recheckWaiters()
@@ -70,13 +73,38 @@ export function applyCoordinatorState(engine: ReplicationEngine, next: Replicati
   return true
 }
 
+/**
+ * Returns true when the engine holds a group state from the same store as `next` with a higher version, which means
+ * that the coordinator produced `next` before the state that the engine holds. A state from another store, such as a
+ * restored or new etcd cluster, is never older, so the engine follows that store from its first state.
+ *
+ * @param next - A group state that the coordinator returned, or null when it holds no state for the group.
+ * @param held - The group state that the engine holds, or null when it holds none.
+ * @returns True when both states exist, come from the same store, and `next` has the lower version.
+ *
+ * @internal
+ */
+export function isOlderGroupState(next: ReplicationGroupState | null, held: ReplicationGroupState | null): boolean {
+  return next !== null && held !== null && next.storeId === held.storeId && next.version < held.version
+}
+
+/**
+ * Returns the group state that the engine holds after it reads the group from the coordinator, which is the state that
+ * the read returned unless the engine already held a state with a higher version.
+ *
+ * @param engine - The engine that keeps the group state.
+ * @returns The group state that the engine holds, or null when the coordinator holds no state for the group.
+ * @throws CoordinatorError when the coordinator does not answer.
+ *
+ * @internal
+ */
 export async function refreshCoordinatorState(engine: ReplicationEngine): Promise<ReplicationGroupState | null> {
   const config = engine.config.coordinator
   if (!config) return null
   try {
     const state = await config.coordinator.getReplicationGroupState(config.clusterId, config.groupId)
     applyCoordinatorState(engine, state)
-    return state
+    return engine.coordinatorState
   } catch (err: unknown) {
     engine.coordinatorAuthority = false
     throw new CoordinatorError('Coordinator is unavailable while refreshing replication-group authority', {
@@ -329,6 +357,8 @@ export function getCoordinatorRuntimeStatus(engine: ReplicationEngine): Replicat
     groupId: config.groupId,
     currentPrimary: state.currentPrimary ? { ...state.currentPrimary } : null,
     primaryTerm: state.primaryTerm,
+    groupStateVersion: state.version,
+    groupStateStoreId: state.storeId,
     inSyncNodeIds: [...state.inSyncNodeIds],
     drainingNodeIds: [...state.drainingNodeIds],
     repairingNodeIds: [...state.repairingNodeIds],

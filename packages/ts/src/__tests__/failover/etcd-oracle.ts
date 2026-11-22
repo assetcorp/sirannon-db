@@ -42,7 +42,14 @@ interface RawKeyValue {
 }
 
 interface RangeResponse {
+  header?: { cluster_id?: string }
   kvs?: RawKeyValue[]
+}
+
+export interface StoredGroupAtRevision {
+  group: StoredGroup
+  modRevision: bigint
+  etcdClusterId: string
 }
 
 export class EtcdOracle {
@@ -54,22 +61,21 @@ export class EtcdOracle {
   ) {}
 
   async group(): Promise<StoredGroup | null> {
-    const kv = await this.readKey(
-      `clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(this.groupId)}`,
-    )
+    return (await this.groupWithModRevision())?.group ?? null
+  }
+
+  async groupWithModRevision(): Promise<StoredGroupAtRevision | null> {
+    const response = await this.range({
+      key: encode(
+        this.fullKey(`clusters/${encodeURIComponent(this.clusterId)}/groups/${encodeURIComponent(this.groupId)}`),
+      ),
+    })
+    const kv = response.kvs?.[0]
     if (!kv) return null
-    const raw = parseObject(kv.value)
     return {
-      votingDataBearingNodeIds: stringList(raw.votingDataBearingNodeIds),
-      pendingVoterNodeIds: stringList(raw.pendingVoterNodeIds ?? []),
-      currentPrimary: primaryOf(raw.currentPrimary),
-      primaryTerm: BigInt(String(raw.primaryTerm)),
-      durabilityPointSeq: BigInt(String(raw.durabilityPointSeq ?? '0')),
-      inSyncNodeIds: stringList(raw.inSyncNodeIds),
-      drainingNodeIds: stringList(raw.drainingNodeIds),
-      repairingNodeIds: stringList(raw.repairingNodeIds),
-      faultedNodeIds: stringList(raw.faultedNodeIds ?? []),
-      compatibility: compatibilityOf(raw.compatibility),
+      group: storedGroupOf(decode(kv.value)),
+      modRevision: BigInt(kv.mod_revision ?? '0'),
+      etcdClusterId: response.header?.cluster_id ?? '',
     }
   }
 
@@ -180,9 +186,7 @@ export class EtcdOracle {
     return `${trimmed}/${relativeKey}`
   }
 
-  private async readKey(
-    relativeKey: string,
-  ): Promise<{ key: string; value: string; lease?: string; create_revision?: string } | null> {
+  private async readKey(relativeKey: string): Promise<RawKeyValue | null> {
     const response = await this.range({ key: encode(this.fullKey(relativeKey)) })
     const kv = response.kvs?.[0]
     if (!kv) return null
@@ -215,6 +219,22 @@ export class EtcdOracle {
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError))
+  }
+}
+
+function storedGroupOf(text: string): StoredGroup {
+  const raw = parseObject(text)
+  return {
+    votingDataBearingNodeIds: stringList(raw.votingDataBearingNodeIds),
+    pendingVoterNodeIds: stringList(raw.pendingVoterNodeIds ?? []),
+    currentPrimary: primaryOf(raw.currentPrimary),
+    primaryTerm: BigInt(String(raw.primaryTerm)),
+    durabilityPointSeq: BigInt(String(raw.durabilityPointSeq ?? '0')),
+    inSyncNodeIds: stringList(raw.inSyncNodeIds),
+    drainingNodeIds: stringList(raw.drainingNodeIds),
+    repairingNodeIds: stringList(raw.repairingNodeIds),
+    faultedNodeIds: stringList(raw.faultedNodeIds ?? []),
+    compatibility: compatibilityOf(raw.compatibility),
   }
 }
 

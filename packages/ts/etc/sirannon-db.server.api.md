@@ -77,6 +77,14 @@ export interface BatchResponse {
 }
 
 // @public
+export interface CheckpointResponse {
+    busy: boolean;
+    emptied: boolean;
+    framesCheckpointed: number;
+    framesInLog: number;
+}
+
+// @public
 export function createServer<Identity = unknown>(sirannon: Sirannon, options?: ServerOptions<Identity>): SirannonServer<Identity>;
 
 // @internal

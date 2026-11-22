@@ -9,6 +9,7 @@ export type {
 export { DEFAULT_CHAIN_NAME, readBackupChains } from './backup/chain.js'
 export type { BackupRestorePlan, BackupSafeToDeleteOptions } from './backup/chain-queries.js'
 export { backupPiecesSafeToDelete, planBackupRestore } from './backup/chain-queries.js'
+export type { CheckpointResult } from './backup/checkpoint.js'
 export type { BackupCycleOptions } from './backup/cycle-options.js'
 export type { BackupCycleError, BackupCycleStatus } from './backup/cycle-status.js'
 export type { BackupDestination, BackupPiece } from './backup/destination.js'

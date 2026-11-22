@@ -1,6 +1,7 @@
 import { decodeWireRowsInPlace, encodeTaggedValues } from '../../core/cdc/encoding.js'
 import type { BulkLoadDurability, ChangeEvent, Params, ReadConcern, WriteConcern } from '../../core/types.js'
 import { withSirannonSubprotocol } from '../../core/ws-handshake.js'
+import type { CheckpointResponse } from '../../server/checkpoint-protocol.js'
 import type {
   AckResponse,
   BatchResponse,
@@ -10,6 +11,8 @@ import type {
   TransactionResponse,
   WSClientMessage,
 } from '../../server/protocol.js'
+import { toHttpUrl } from '../endpoint-urls.js'
+import { postJson } from '../http-json.js'
 import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
 import type { ClientWebSocket } from './ws-connect.js'
@@ -53,6 +56,7 @@ export class WebSocketTransport implements Transport {
   private readonly protocols: string[] | undefined
   private readonly headers: Record<string, string> | undefined
   private refusal: RemoteError | null = null
+  private readonly httpRequests = new Set<AbortController>()
 
   private readonly pending: PendingRequests
   private activeSubscriptions = new Map<string, ActiveSubscription>()
@@ -219,10 +223,39 @@ export class WebSocketTransport implements Transport {
     return this.request<AckResponse>({ type: 'ack', id, deviceId, seq: seq.toString() })
   }
 
+  /**
+   * Checkpoints the database's write-ahead log on the server and returns whether the checkpoint finished. The server
+   * serves the checkpoint on its HTTP route only, so this sends one HTTP request to the same host and path.
+   *
+   * @returns Whether the checkpoint finished, with the frame counts that the server reports.
+   */
+  async checkpoint(): Promise<CheckpointResponse> {
+    if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+    const request = new AbortController()
+    this.httpRequests.add(request)
+    try {
+      const answer = await postJson(
+        `${toHttpUrl(this.url)}/checkpoint`,
+        {},
+        this.headers,
+        this.requestTimeout,
+        request.signal,
+      )
+      if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport closed')
+      return answer as CheckpointResponse
+    } catch (err) {
+      if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport closed')
+      throw err
+    } finally {
+      this.httpRequests.delete(request)
+    }
+  }
+
   /** Closes the transport and ends every subscription on it. */
   close(): void {
     this.closed = true
     this.cancelReconnect()
+    for (const request of this.httpRequests) request.abort()
     this.pending.rejectAll(new RemoteError('TRANSPORT_ERROR', 'Transport closed'))
     this.activeSubscriptions.clear()
     this.liveQueries.clear()

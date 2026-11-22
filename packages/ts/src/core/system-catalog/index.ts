@@ -7,6 +7,7 @@ export {
   selectMaxAppliedSourceSeq,
   selectMaxAppliedSourceSeqByNode,
 } from './applied-changes-table.js'
+export { readBusyTimeout, setBusyTimeout } from './busy-timeout.js'
 export {
   deleteHistoryChangesAfterHlc,
   deleteStampedChangesUpToSeq,

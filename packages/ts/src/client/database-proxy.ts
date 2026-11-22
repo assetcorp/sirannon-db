@@ -8,6 +8,7 @@ import type {
   ReadConcern,
   WriteConcern,
 } from '../core/types.js'
+import type { CheckpointResponse } from '../server/checkpoint-protocol.js'
 import type { ExecuteResponse } from '../server/protocol.js'
 import { RemoteLiveQuery } from './remote-live-query.js'
 import type { ServerCapabilityCheck } from './server-capabilities.js'
@@ -38,6 +39,29 @@ const SQL_ACCEPTED: Promise<void> = Promise.resolve()
 
 function closedDatabaseError(): RemoteError {
   return new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
+}
+
+function checkpointResponseFrom(answer: unknown): CheckpointResponse {
+  const body = (answer ?? {}) as Partial<Record<keyof CheckpointResponse, unknown>>
+  const { busy, framesInLog, framesCheckpointed, emptied } = body
+  if (
+    typeof busy !== 'boolean' ||
+    typeof emptied !== 'boolean' ||
+    !isFrameCount(framesInLog) ||
+    !isFrameCount(framesCheckpointed) ||
+    framesCheckpointed > framesInLog ||
+    (emptied && (busy || framesInLog !== 0))
+  ) {
+    throw new RemoteError(
+      'INVALID_RESPONSE',
+      'The server answered the checkpoint with a body that holds no checkpoint result',
+    )
+  }
+  return { busy, framesInLog, framesCheckpointed, emptied }
+}
+
+function isFrameCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function isAsyncIterable<T>(value: Iterable<T> | AsyncIterable<T>): value is AsyncIterable<T> {
@@ -317,6 +341,24 @@ export class RemoteDatabase {
   ): Promise<BulkLoadResult> {
     await this.assertSqlAccepted()
     return this.transport.load(sql, paramsBatch, durability, checkpoint)
+  }
+
+  /**
+   * Checkpoints the database's write-ahead log on the server and reports whether
+   * the checkpoint finished, as the core `Database.checkpoint` method does.
+   *
+   * The server serves this on its HTTP route only, so a client on the WebSocket
+   * transport sends one HTTP request to the same server with the configured
+   * `headers`. A topology-aware client sends it to the primary. On a database
+   * that the server opened with backups, the server answers only once a turn of
+   * the backup cycle ends, which can take as long as a full copy of the database,
+   * so raise `requestTimeout` for a large database.
+   *
+   * @returns Whether a reader stopped the checkpoint, the frames left in the log, the frames that SQLite copied into the database file, and whether the log is empty afterwards.
+   */
+  async checkpoint(): Promise<CheckpointResponse> {
+    if (this.lifetime.signal.aborted) throw closedDatabaseError()
+    return checkpointResponseFrom(await this.transport.checkpoint())
   }
 
   /**

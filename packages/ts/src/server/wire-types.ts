@@ -12,6 +12,7 @@ import type {
 } from './backup-protocol.js'
 import type { BackupRestoreStatus } from './backup-restore-runs.js'
 import type { CapabilitiesResponse } from './capabilities.js'
+import type { CheckpointResponse } from './checkpoint-protocol.js'
 import type { LivenessResponse, ReadinessResponse } from './health.js'
 import type { MigrationListRequest, MigrationListResponse } from './http-migrations.js'
 import type {
@@ -163,6 +164,7 @@ export interface HttpWireTypes {
   OperationQueryRequest: OperationQueryRequest
   OperationExecuteRequest: OperationExecuteRequest
   OperationExecuteResponse: OperationExecuteResponse
+  CheckpointResponse: CheckpointResponse
   BackupTriggerResponse: BackupTriggerResponse
   BackupStatusResponse: BackupStatusResponse
   BackupChainResponse: BackupChainResponse

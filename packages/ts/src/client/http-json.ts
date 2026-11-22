@@ -21,6 +21,9 @@ async function requestJson(url: string, init: RequestInit, timeoutMs: number, ca
   } catch (err) {
     clearTimeout(timer)
     cancel?.removeEventListener('abort', abort)
+    if (controller.signal.aborted && cancel?.aborted !== true) {
+      throw new RemoteError('TIMEOUT', `The response from ${url} took longer than ${timeoutMs}ms to arrive`)
+    }
     throw new RemoteError(
       'CONNECTION_ERROR',
       `Failed to connect to ${url}: ${err instanceof Error ? err.message : String(err)}`,
@@ -41,6 +44,12 @@ async function requestJson(url: string, init: RequestInit, timeoutMs: number, ca
   }
 
   if (!response.ok) {
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+      throw new RemoteError(
+        'INVALID_RESPONSE',
+        `Server returned a JSON value that is not an object (HTTP ${response.status})`,
+      )
+    }
     const errorData = data as { error?: { code?: string; message?: string } }
     throw new RemoteError(
       errorData.error?.code ?? 'UNKNOWN_ERROR',
@@ -55,6 +64,7 @@ export async function postJson(
   body: unknown,
   headers: Record<string, string> | undefined,
   timeoutMs: number = DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+  cancel?: AbortSignal,
 ): Promise<unknown> {
   return requestJson(
     url,
@@ -64,6 +74,7 @@ export async function postJson(
       body: JSON.stringify(body),
     },
     timeoutMs,
+    cancel,
   )
 }
 

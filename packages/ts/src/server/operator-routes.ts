@@ -10,6 +10,7 @@ import {
   handleBackupTrigger,
   handleBackupVerify,
 } from './http-backups.js'
+import { handleCheckpoint } from './http-checkpoint.js'
 import { type EncryptionChangeSettings, handleEncryptionChange, handleEncryptionStatus } from './http-encryption.js'
 import type { OperationRouteDeps } from './operation-route.js'
 
@@ -27,8 +28,8 @@ export interface OperatorRouteDeps<Identity> {
 }
 
 /**
- * Registers the routes that operate on a database file, which are the backup routes, the restore routes, and the
- * encryption routes.
+ * Registers the routes that operate on a database file, which are the checkpoint route, the backup routes, the restore
+ * routes, and the encryption routes.
  *
  * @param routes - The registrar that the server's routes go through.
  * @param deps - The registry, the route settings, and the switches that open the restore and key change routes.
@@ -41,6 +42,7 @@ export function registerOperatorRoutes<Identity>(routes: RouteRegistrar, deps: O
   const get = (path: string, handler: Parameters<typeof wrapDbGetRoute>[1]) =>
     routes.get(path, wrapDbGetRoute<Identity>(routeDeps, handler))
 
+  post('/db/:id/checkpoint', handleCheckpoint(sirannon))
   post('/db/:id/backup', handleBackupTrigger(sirannon))
   get('/db/:id/backup', handleBackupStatus(sirannon))
   get('/db/:id/backup/chain', handleBackupChain(sirannon))

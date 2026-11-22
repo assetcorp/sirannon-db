@@ -32,6 +32,10 @@ const FORBIDDEN_PRAGMA_MESSAGES = new Map([
   ['writable_schema', 'PRAGMA writable_schema is not permitted'],
   ['temp_store_directory', 'PRAGMA temp_store_directory is not permitted'],
   ['data_store_directory', 'PRAGMA data_store_directory is not permitted'],
+  [
+    'wal_checkpoint',
+    'PRAGMA wal_checkpoint is not permitted through query or execute: call checkpoint() on the database, which runs the checkpoint on the writer and reports whether a reader stopped it',
+  ],
 ])
 
 const WRITE_VERBS = new Set(['insert', 'update', 'delete', 'replace', 'create', 'alter', 'drop', 'vacuum', 'reindex'])
@@ -54,8 +58,8 @@ export function isReservedIdentifier(name: string): boolean {
  * Returns the reason that the query API refuses a statement, or `null` when the query API accepts it.
  *
  * The query API refuses a statement that names a `_sirannon` identifier, modifies a `sqlite_` identifier, or uses
- * `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA writable_schema`, `PRAGMA temp_store_directory`, or
- * `PRAGMA data_store_directory`. A pragma's name counts whether the statement writes it bare, quoted as an identifier,
+ * `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA writable_schema`, `PRAGMA temp_store_directory`,
+ * `PRAGMA data_store_directory`, or `PRAGMA wal_checkpoint`. A pragma's name counts whether the statement writes it bare, quoted as an identifier,
  * or as a string literal.
  *
  * @param sql - The statement text, which can hold several statements separated by semicolons.
@@ -71,7 +75,8 @@ export function reservedSqlError(sql: string): string | null {
     !lower.includes('detach') &&
     !lower.includes('writable_schema') &&
     !lower.includes('vacuum') &&
-    !lower.includes('_store_directory')
+    !lower.includes('_store_directory') &&
+    !lower.includes('wal_checkpoint')
   ) {
     return null
   }

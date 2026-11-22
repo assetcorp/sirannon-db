@@ -125,6 +125,7 @@ export {
   primaryKeyColumns,
   referencedTables,
   type SchemaObjectRow,
+  selectCapturedTableNames,
   selectCountTableRows,
   selectIndexSql,
   selectOrdinaryTableName,

@@ -165,7 +165,12 @@ export class MigrationRunner {
     return true
   }
 
-  static async rollback(conn: SQLiteConnection, migrations: Migration[], version?: number): Promise<RollbackResult> {
+  static async rollback(
+    conn: SQLiteConnection,
+    migrations: Migration[],
+    version?: number,
+    afterRollback?: (txConn: SQLiteConnection) => Promise<void>,
+  ): Promise<RollbackResult> {
     if (version !== undefined && (!Number.isSafeInteger(version) || version < 0)) {
       throw new MigrationError(
         `Invalid rollback target version: ${version}`,
@@ -182,7 +187,7 @@ export class MigrationRunner {
       const run = () =>
         committedOrMigrationError('Rollback', version ?? 0, 'MIGRATION_ROLLBACK_ERROR', () =>
           conn.transaction(txConn =>
-            MigrationRunner.rollbackInTransaction(txConn, inputByVersion, version, withoutForeignKeys),
+            MigrationRunner.rollbackInTransaction(txConn, inputByVersion, version, withoutForeignKeys, afterRollback),
           ),
         )
       return withoutForeignKeys ? withForeignKeysOff(conn, version ?? 0, 'MIGRATION_ROLLBACK_ERROR', run) : run()
@@ -226,6 +231,7 @@ export class MigrationRunner {
     inputByVersion: Map<number, Migration>,
     version: number | undefined,
     withoutForeignKeys: boolean,
+    afterRollback: ((txConn: SQLiteConnection) => Promise<void>) | undefined,
   ): Promise<RollbackResult> {
     await ensureMigrationsTable(txConn)
     const appliedRows = await selectAppliedMigrationsNewestFirst(txConn)
@@ -285,6 +291,7 @@ export class MigrationRunner {
         )
       }
       await deleteStmt.run(entry.version)
+      if (afterRollback) await afterRollback(txConn)
       rolledBackEntries.push({ version: entry.version, name: entry.name })
     }
 

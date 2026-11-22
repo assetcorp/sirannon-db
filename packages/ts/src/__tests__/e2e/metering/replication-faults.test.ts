@@ -8,6 +8,7 @@ import {
   createMtlsCerts,
   createPrimary,
   createReplica,
+  LOOPBACK_HOST,
   type ManagedNode,
   type MtlsCerts,
   stopNode,
@@ -102,7 +103,7 @@ async function startFaultedPair(): Promise<FaultedPair> {
   const replicaNode = await createReplica({
     nodeId: REPLICA_ID,
     certs,
-    primaryHost: 'localhost',
+    primaryHost: LOOPBACK_HOST,
     primaryPort: link.port,
     registry: { sirannon: replicaRegistry, driver: countingDriver(), databaseId: DATABASE_ID },
     configOverrides: { writeForwarding: true },

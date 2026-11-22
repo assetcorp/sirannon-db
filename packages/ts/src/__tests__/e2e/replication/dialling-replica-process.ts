@@ -1,4 +1,5 @@
 import { GrpcReplicationTransport } from '../../../transport/grpc/index.js'
+import { LOOPBACK_HOST } from '../lib/loopback.js'
 
 const [nodeId, caCertPath, certPath, keyPath, endpoint] = process.argv.slice(2)
 
@@ -13,7 +14,7 @@ if (
 }
 
 const transport = new GrpcReplicationTransport({
-  host: 'localhost',
+  host: LOOPBACK_HOST,
   tlsCert: certPath,
   tlsKey: keyPath,
   tlsCaCert: caCertPath,

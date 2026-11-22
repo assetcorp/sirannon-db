@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import { lookup } from 'node:dns/promises'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { createServer, type Server } from 'node:net'
+import { connect, createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +17,7 @@ import {
 } from '../../helpers/fault-drivers/failing-outbound-read-driver.js'
 import { decodeHlc } from '../lib/device-sync-oracle.js'
 import type { ManagedNode } from '../lib/factory.js'
+import { LOOPBACK_HOST, loopbackEndpoint } from '../lib/loopback.js'
 import {
   caughtUp,
   errorsOf,
@@ -86,6 +88,17 @@ async function listening(port: number, host: string): Promise<Server> {
     server.listen(port, host, () => resolve())
   })
   return server
+}
+
+function acceptsConnections(host: string, port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const socket = connect({ host, port })
+    socket.once('connect', () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.once('error', () => resolve(false))
+  })
 }
 
 function portOf(server: Server): number {
@@ -316,7 +329,7 @@ describe('replication through network faults and restarts', () => {
     const db = await sirannon.open(PRIMARY, storage.dbPath)
     const cert = certs.certForNode(PRIMARY)
     const transport = new GrpcReplicationTransport({
-      host: 'localhost',
+      host: LOOPBACK_HOST,
       port,
       tlsCert: cert.certPath,
       tlsKey: cert.keyPath,
@@ -352,6 +365,37 @@ describe('replication through network faults and restarts', () => {
       'the replica to receive the write from the restarted engine',
     )
     expect(tableRows(replica.dbPath, 'orders')).toEqual([order(1, 'after-a-failed-start', 1)])
+  })
+
+  it('refuses to start on a host name while one address that the name resolves to has the port taken, and listens on none of them', async () => {
+    const { scene, certs } = handle
+    const blocker = await listening(0, LOOPBACK_HOST)
+    const port = portOf(blocker)
+    onTestFinished(() => new Promise<void>(resolve => blocker.close(() => resolve())))
+    const addresses = [...new Set((await lookup('localhost', { all: true })).map(entry => entry.address))]
+    expect(addresses).toContain(LOOPBACK_HOST)
+    const cert = certs.certForNode(PRIMARY)
+    const transport = scene.track(
+      new GrpcReplicationTransport({
+        host: 'localhost',
+        port,
+        tlsCert: cert.certPath,
+        tlsKey: cert.keyPath,
+        tlsCaCert: certs.caCertPath,
+      }),
+    )
+
+    const failure = await transport.connect(PRIMARY, { localRole: 'primary' }).then(
+      () => null,
+      (error: unknown) => error,
+    )
+
+    expect(failure).toMatchObject({ code: 'TRANSPORT_ERROR' })
+    expect(String((failure as Error).message)).toContain(`${LOOPBACK_HOST}:${port}`)
+    if (addresses.length > 1) expect(String((failure as Error).message)).toContain(`'localhost' resolves to`)
+    for (const address of addresses.filter(candidate => candidate !== LOOPBACK_HOST)) {
+      expect(await acceptsConnections(address, port)).toBe(false)
+    }
   })
 
   it('stops both nodes within a bounded time while the stream between them is stalled with batches in flight', async () => {
@@ -468,7 +512,7 @@ describe('replication through network faults and restarts', () => {
     const cert = certs.certForNode(REPLICA)
     const child = spawnScript(
       'dialling-replica-process.ts',
-      [REPLICA, certs.caCertPath, cert.certPath, cert.keyPath, `localhost:${unreachable.port}`],
+      [REPLICA, certs.caCertPath, cert.certPath, cert.keyPath, loopbackEndpoint(unreachable.port)],
       true,
     )
     const messages: unknown[] = []

@@ -3,9 +3,9 @@ import { SirannonError } from '../../../core/errors.js'
 import type { Sirannon } from '../../../core/sirannon.js'
 import type { ServerOptions } from '../../../core/types.js'
 import { createServer, type SirannonServer } from '../../../server/server.js'
+import { LOOPBACK_HOST } from './loopback.js'
 
 const LISTEN_ATTEMPTS = 5
-const LOOPBACK_HOST = '127.0.0.1'
 
 function unusedLoopbackPort(): Promise<number> {
   return new Promise((resolve, reject) => {

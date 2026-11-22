@@ -1,7 +1,6 @@
 import { Server, type ServerDuplexStream, status } from '@grpc/grpc-js'
 import { HealthImplementation } from 'grpc-health-check'
 import { SirannonError } from '../../core/errors.js'
-import { TransportError } from '../../replication/errors.js'
 import type { TopologyRole } from '../../replication/types.js'
 import {
   fromAckPayload,
@@ -25,6 +24,7 @@ import { localHello, peerHelloFields } from './hello.js'
 import { SERVICE_NAME } from './options.js'
 import type { PeerStreamEntry } from './peer-streams.js'
 import { registerPeer, removePeer, restartPeerConnection } from './peer-streams.js'
+import { bindEveryAddress } from './server-bind.js'
 import type { GrpcReplicationTransport } from './transport.js'
 
 export async function startServer(t: GrpcReplicationTransport): Promise<void> {
@@ -55,20 +55,7 @@ export async function startServer(t: GrpcReplicationTransport): Promise<void> {
 
   const host = t.options.host ?? '0.0.0.0'
   const port = t.options.port ?? 0
-  const bindAddress = `${host}:${port}`
-
-  const serverCreds = buildServerCreds(t.options)
-
-  await new Promise<void>((resolve, reject) => {
-    server.bindAsync(bindAddress, serverCreds, (err, assignedPort) => {
-      if (err) {
-        reject(new TransportError(`Failed to bind gRPC server: ${err.message}`))
-        return
-      }
-      t.boundPort = assignedPort
-      resolve()
-    })
-  })
+  t.boundPort = await bindEveryAddress(server, host, port, buildServerCreds(t.options))
 }
 
 interface RefusableStream {

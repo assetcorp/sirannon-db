@@ -7,6 +7,7 @@ export {
   selectMaxAppliedSourceSeq,
   selectMaxAppliedSourceSeqByNode,
 } from './applied-changes-table.js'
+export { readBusyTimeout, setBusyTimeout } from './busy-timeout.js'
 export {
   deleteHistoryChangesAfterHlc,
   deleteStampedChangesUpToSeq,
@@ -116,13 +117,16 @@ export {
   selectRolledBackChanges,
 } from './rolled-back-changes-table.js'
 export {
+  type ForeignKeyViolationRow,
+  foreignKeysEnabled,
+  foreignKeyViolations,
   type IndexColumnRow,
   type IndexListRow,
   indexColumns,
   primaryKeyColumns,
-  readBusyTimeout,
   referencedTables,
   type SchemaObjectRow,
+  selectCapturedTableNames,
   selectCountTableRows,
   selectIndexSql,
   selectOrdinaryTableName,
@@ -131,7 +135,6 @@ export {
   selectTriggerSql,
   selectUserSchemaObjects,
   selectUserTableNames,
-  setBusyTimeout,
   setForeignKeysEnabled,
   TABLE_XINFO_HIDDEN,
   type TableColumnRow,

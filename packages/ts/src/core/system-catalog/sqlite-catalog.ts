@@ -1,5 +1,5 @@
 import type { SQLiteConnection } from '../driver/types.js'
-import { SirannonError } from '../errors.js'
+import { isKeyword, tokenizeSql } from '../live/sql-tokens.js'
 
 /**
  * Holds one column of a table as `PRAGMA table_info` reports it.
@@ -152,6 +152,42 @@ export async function selectTriggerSql(conn: SQLiteConnection, trigger: string):
 }
 
 /**
+ * Returns the name of every table that carries an insert trigger named for it under `triggerPrefix`, whose stored
+ * statement writes into `changesTable`.
+ *
+ * @param conn - The connection to read the schema through.
+ * @param triggerPrefix - The name prefix of the change-capture triggers.
+ * @param changesTable - The change log that the triggers write to.
+ * @returns The stored table names, in schema order.
+ * @internal
+ */
+export async function selectCapturedTableNames(
+  conn: SQLiteConnection,
+  triggerPrefix: string,
+  changesTable: string,
+): Promise<string[]> {
+  const stmt = await conn.prepare(
+    "SELECT tbl_name, sql FROM sqlite_master WHERE type = 'trigger' AND name = ? || tbl_name || '_insert'",
+  )
+  const rows = (await stmt.all(triggerPrefix)) as Array<{ tbl_name: string; sql: string | null }>
+  return rows.filter(row => row.sql !== null && insertsInto(row.sql, changesTable)).map(row => row.tbl_name)
+}
+
+function insertsInto(sql: string, table: string): boolean {
+  const tokens = tokenizeSql(sql)
+  return tokens.some((token, at) => {
+    if (!isKeyword(token, 'insert') && !isKeyword(token, 'replace')) return false
+    const into = isKeyword(tokens[at + 1], 'or') ? at + 3 : at + 1
+    if (!isKeyword(tokens[into], 'into')) return false
+    const target = tokens[into + 1]
+    if (target?.kind === 'word') return target.lower === table.toLowerCase()
+    return (
+      target?.kind === 'string' && target.value.slice(1, -1).replaceAll("''", "'").toLowerCase() === table.toLowerCase()
+    )
+  })
+}
+
+/**
  * Returns the number of rows in a table.
  *
  * @param conn - The connection to read the table through.
@@ -192,36 +228,39 @@ export async function setForeignKeysEnabled(conn: SQLiteConnection, enabled: boo
 }
 
 /**
- * Returns how long, in milliseconds, a connection waits on a lock that another connection holds before SQLite reports
- * the database as busy.
+ * Returns whether a connection enforces foreign keys.
  *
  * @param conn - The connection to read.
- * @returns The wait in milliseconds, or zero when the connection reports busy at once.
+ * @returns `true` when SQLite enforces foreign keys on the connection.
  * @internal
  */
-export async function readBusyTimeout(conn: SQLiteConnection): Promise<number> {
-  const stmt = await conn.prepare('PRAGMA busy_timeout')
-  const row = await stmt.get<{ timeout: number | bigint }>()
-  return row ? Number(row.timeout) : 0
+export async function foreignKeysEnabled(conn: SQLiteConnection): Promise<boolean> {
+  const stmt = await conn.prepare('PRAGMA foreign_keys')
+  const row = (await stmt.get()) as { foreign_keys?: number | bigint } | undefined
+  return Number(row?.foreign_keys ?? 0) !== 0
 }
 
 /**
- * Sets how long, in milliseconds, a connection waits on a lock that another connection holds before SQLite reports
- * the database as busy.
+ * Holds one row that `PRAGMA foreign_key_check` reports: a row whose foreign key refers to no row of its parent.
  *
- * @param conn - The connection to change.
- * @param milliseconds - The wait, as a non-negative safe integer, where zero reports busy at once.
- * @returns A promise that settles once SQLite has applied the setting.
  * @internal
  */
-export async function setBusyTimeout(conn: SQLiteConnection, milliseconds: number): Promise<void> {
-  if (!Number.isSafeInteger(milliseconds) || milliseconds < 0) {
-    throw new SirannonError(
-      `A busy timeout must be a non-negative integer, and ${milliseconds} is not`,
-      'INTERNAL_ERROR',
-    )
-  }
-  await conn.exec(`PRAGMA busy_timeout = ${milliseconds}`)
+export interface ForeignKeyViolationRow {
+  table: string
+  rowid: number | bigint | null
+  parent: string
+}
+
+/**
+ * Returns every row in the database whose foreign key refers to no row of its parent table.
+ *
+ * @param conn - The connection whose database to check, which can hold an open transaction.
+ * @returns One row per broken reference, or no rows when every foreign key holds.
+ * @internal
+ */
+export async function foreignKeyViolations(conn: SQLiteConnection): Promise<ForeignKeyViolationRow[]> {
+  const stmt = await conn.prepare('PRAGMA foreign_key_check')
+  return (await stmt.all()) as ForeignKeyViolationRow[]
 }
 
 /**

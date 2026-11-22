@@ -258,6 +258,8 @@ When a `REPLACE` conflict resolution deletes a row, the change log must hold a `
 
 SQLite refuses `ALTER TABLE ... DROP COLUMN` while a trigger names the column, so an implementation must drop the table's CDC triggers, run the statement, and install the triggers for the new column list inside one savepoint. A statement that fails then leaves the old triggers in place.
 
+A migration and a rollback must keep capture on every table whose `_sirannon_trg_{table}_insert` trigger writes to the change log, whether or not the process watches that table. After each statement that changes the schema, an implementation must install the CDC triggers again on each such table whose triggers are missing or differ from the triggers for its current columns, so that every later write in the same migration reaches the change log, and it must drop the CDC triggers of each such table that no longer exists under its name. A table that the migration creates keeps no triggers until the next statement that alters or drops a table, an index, a trigger, or a view, or until the end of the migration, so that the change log leaves out the rows that the migration copies into it.
+
 Table and column names an implementation writes into trigger SQL must match `^[a-zA-Z_][a-zA-Z0-9_]*$`, and an implementation must reject every other name.
 
 ### CDC Epoch
@@ -452,10 +454,13 @@ Migration {
   up:        string or (tx: Transaction) -> async void
   down?:     string or (tx: Transaction) -> async void
   baseline?: { through: number }
+  withoutForeignKeys?: boolean
 }
 ```
 
 The version cap is 2,147,483,647 because it mirrors to `PRAGMA user_version`, a signed 32-bit value.
+
+A migration runs without foreign keys when `withoutForeignKeys` is true, or when its SQL holds a `PRAGMA foreign_keys` statement that sets the value `OFF`, `NO`, `FALSE`, or `0`, in any letter case and whether bare or quoted, at any position among its statements. The same test applies to `down` during a rollback. A non-boolean `withoutForeignKeys` fails with `MIGRATION_VALIDATION_ERROR`. A migration with `withoutForeignKeys: true` and a string `up` must include that pragma in its `up` SQL, because a device receives only the SQL. Validation rejects a string `up` that lacks the pragma with `MIGRATION_VALIDATION_ERROR`.
 
 ### Checksum (Normative)
 
@@ -463,7 +468,9 @@ A string `up` migration carries a checksum: the 64-bit FNV-1a hash of the up SQL
 
 ### Execution
 
-An implementation validates migrations (positive integer version within the cap, name matching `^\w+$`, no duplicate versions, non-empty SQL) and sorts them ascending, and each pending migration runs in its own transaction that executes the `up` and inserts a tracking row with the content checksum. A failure rolls that migration back and fails with `MIGRATION_ERROR` carrying the version, while every migration before it stays applied and recorded; validation failures fail with `MIGRATION_VALIDATION_ERROR` or `MIGRATION_DUPLICATE_VERSION`. An implementation retries a concurrent run once and otherwise fails with `MIGRATION_CONCURRENT`.
+An implementation validates migrations (positive integer version within the cap, name matching `^\w+$`, no duplicate versions, non-empty SQL) and sorts them ascending, and each pending migration runs in its own transaction that executes the `up` and inserts a tracking row with the content checksum. A failure rolls that migration back and fails with `MIGRATION_ERROR` carrying the version, while every migration before it stays applied and recorded; validation failures fail with `MIGRATION_VALIDATION_ERROR` or `MIGRATION_DUPLICATE_VERSION`. A failure at commit, such as a deferred foreign key, also fails with `MIGRATION_ERROR`. An implementation retries a concurrent run once and otherwise fails with `MIGRATION_CONCURRENT`.
+
+For a migration that runs without foreign keys, an implementation turns foreign keys off on the writer before the migration's transaction opens, because SQLite changes the setting only outside a transaction. It runs every statement of the migration, so a `PRAGMA foreign_keys = ON` inside the migration has no effect, and it runs `PRAGMA foreign_key_check` before the commit. When that check reports a row, the migration rolls back and fails with `MIGRATION_ERROR`, naming the rows that break a foreign key. The implementation turns foreign keys back on after the transaction whatever its outcome, and it fails the migration when the writer still leaves them off.
 
 ### Baseline
 
@@ -477,7 +484,7 @@ The set is a list or a function returning a list. The registry calls the functio
 
 ### Rollback
 
-Rollback reverses applied migrations in descending version order. With no target it reverses only the latest; with a target it reverses every version above the target. Each runs the migration's `down` in a transaction, then removes the tracking row and re-mirrors `user_version`. A missing `down` fails with `MIGRATION_NO_DOWN`.
+Rollback reverses applied migrations in descending version order. With no target it reverses only the latest; with a target it reverses every version above the target. Each runs the migration's `down` in a transaction, then removes the tracking row and re-mirrors `user_version`. A missing `down` fails with `MIGRATION_NO_DOWN`. When any migration in the rollback runs without foreign keys, the whole rollback runs without them, as Execution describes, and a failed foreign key check or a failure at commit fails with `MIGRATION_ROLLBACK_ERROR`.
 
 ### File Migration Sources
 

@@ -323,7 +323,9 @@ etcdutl snapshot restore snapshot.db --bump-revision 1000000000 --mark-compacted
 
 The bump keeps every revision of the restored cluster above the revisions that the nodes have already read, and marking those revisions compacted ends every watch that the nodes held, so that each node opens its watches again on the restored cluster. The guide sizes a bump of 1,000,000,000 to cover a snapshot that is a week old on a cluster that takes fewer than 1,500 writes per second.
 
-When the nodes reach an etcd cluster that holds none of their sessions, such as one that you built anew, each node registers its session again at its next renewal, which comes every third of its session TTL and at least one second apart. Until the primary's session is back, the controller finds no live primary, so it can promote an in-sync replica in its place.
+When the nodes reach an etcd cluster that holds none of their sessions, such as one that you built anew, each node registers its session again at its next renewal, which comes every third of its session TTL and at least one second apart. Because of that one-second floor, the engine refuses a `sessionTtlMs` of 1,000 or less with a `RangeError`, since such a session lapses between renewals.
+
+A controller that takes the lease must not promote a replica over a primary whose live session it has not read since taking the lease until one full session lease length, as configured on the controller's own node, has passed since it took the lease. That wait gives every node time to register its session again with a coordinator that lost the sessions, such as one restored from a backup or built anew. Once the controller has read the primary's live session, the wait no longer applies to that primary, and the controller can promote a replica on its first check after that session lapses. Every node in a cluster must use the same session lease length, which is `sessionTtlMs`.
 
 ### Upgrading a group from 0.4
 

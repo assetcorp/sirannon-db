@@ -4,6 +4,7 @@ import type { CoordinatorModeConfig, ReplicationConfig } from '../types.js'
 import { reportPositionForAdmission } from './admission-report.js'
 import {
   COORDINATOR_ENDPOINTS_REFUSAL,
+  COORDINATOR_SESSION_RENEWAL_FLOOR_MS,
   DEFAULT_COORDINATOR_SESSION_TTL_MS,
   FIRST_PRIMARY_TERM,
   REPLICA_LAG_CHECK_INTERVAL_MS,
@@ -47,13 +48,15 @@ function localCoordinatorPrimary(engine: ReplicationEngine): { nodeId: string; e
 
 /**
  * Refuses a replication config that coordinator mode cannot run with: one without a stable node ID, and one that
- * configures peer addresses, which coordinator mode takes from the members' sessions, and one with a replica lag limit
- * that is not a positive whole number of milliseconds.
+ * configures peer addresses, which coordinator mode takes from the members' sessions, one with a replica lag limit
+ * that is not a positive whole number of milliseconds, and one with a session lease of 1,000 ms or less, which lapses
+ * before the node's next renewal.
  *
  * @param config - The replication config that the engine receives.
  * @throws AuthorityError when coordinator mode has no `nodeId`.
  * @throws TopologyError when coordinator mode has `transportConfig.endpoints`.
- * @throws RangeError when `coordinator.maxReplicaLagMs` is not a positive safe integer.
+ * @throws RangeError when `coordinator.maxReplicaLagMs` is not a positive safe integer, or when
+ * `coordinator.sessionTtlMs` is not a safe integer above 1,000.
  *
  * @internal
  */
@@ -65,6 +68,15 @@ export function assertCoordinatorModeConfig(config: ReplicationConfig): void {
   const lagMs = config.coordinator.maxReplicaLagMs
   if (lagMs !== undefined && (!Number.isSafeInteger(lagMs) || lagMs <= 0)) {
     throw new RangeError('coordinator.maxReplicaLagMs must be a positive safe integer')
+  }
+  const sessionTtlMs = config.coordinator.sessionTtlMs
+  if (
+    sessionTtlMs !== undefined &&
+    (!Number.isSafeInteger(sessionTtlMs) || sessionTtlMs <= COORDINATOR_SESSION_RENEWAL_FLOOR_MS)
+  ) {
+    throw new RangeError(
+      `coordinator.sessionTtlMs must be a safe integer above ${COORDINATOR_SESSION_RENEWAL_FLOOR_MS}, because a node renews its session at most once every ${COORDINATOR_SESSION_RENEWAL_FLOOR_MS} ms, so a shorter lease lapses between renewals`,
+    )
   }
   if (config.transportConfig?.endpoints !== undefined) {
     throw new TopologyError(COORDINATOR_ENDPOINTS_REFUSAL)
@@ -261,7 +273,7 @@ function startCoordinatorLeaseRenewal(engine: ReplicationEngine): void {
     () => {
       void keepCoordinatorSessionAlive(engine, ttlMs)
     },
-    Math.max(1_000, Math.floor(ttlMs / 3)),
+    Math.max(COORDINATOR_SESSION_RENEWAL_FLOOR_MS, Math.floor(ttlMs / 3)),
   )
   unrefTimer(timer)
   engine.coordinatorLeaseTimer = timer

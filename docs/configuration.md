@@ -266,7 +266,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `replicationEndpoint` | `string` | - | Replication address that the other members dial, published in this node's session |
 | `votingDataBearingNodeIds` | `string[]` | - | Voter set used to create an unregistered group and calculate write concerns |
 | `coordinator` | `ClusterCoordinator` | required | Coordinator adapter, such as the etcd adapter |
-| `sessionTtlMs` | `number` | `10000` | Node-session lease lifetime |
+| `sessionTtlMs` | `number` | `10000` | Node-session lease lifetime, above 1000, and how long a controller that takes the lease waits for a primary's session before it promotes a replica |
 | `controller` | `boolean \| CoordinatorControllerConfig` | enabled | Enables the controller loop or configures its lease holder, TTL, and tick interval |
 | `compatibility` | `CoordinatorCompatibilityMetadata` | - | Package, specification, and protocol versions checked before promotion |
 

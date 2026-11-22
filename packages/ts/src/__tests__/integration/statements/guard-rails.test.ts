@@ -3,21 +3,15 @@ import { DatabaseSync } from 'node:sqlite'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
-import { columnRaw, createWorkspace, DRIVER_PLACEMENTS, readRaw, type Workspace, WRITER_PLACEMENTS } from './harness.js'
-
-type EntryPoint = [label: string, call: (db: Database, sql: string) => Promise<unknown>]
-
-const ENTRY_POINTS: EntryPoint[] = [
-  ['query', (db, sql) => db.query(sql)],
-  ['queryOne', (db, sql) => db.queryOne(sql)],
-  ['execute', (db, sql) => db.execute(sql)],
-  ['executeBatch', (db, sql) => db.executeBatch(sql, [[]])],
-  ['executeTransaction', (db, sql) => db.executeTransaction([{ sql: 'DELETE FROM notes WHERE id < 0' }, { sql }])],
-  ['transaction execute', (db, sql) => db.transaction(tx => tx.execute(sql))],
-  ['transaction query', (db, sql) => db.transaction(tx => tx.query(sql))],
-  ['transaction database execute', (db, sql) => db.transaction(() => db.execute(sql))],
-  ['bulkLoad', (db, sql) => db.bulkLoad(sql, [[]])],
-]
+import {
+  columnRaw,
+  createWorkspace,
+  DRIVER_PLACEMENTS,
+  STATEMENT_ENTRY_POINTS as ENTRY_POINTS,
+  readRaw,
+  type Workspace,
+  WRITER_PLACEMENTS,
+} from './harness.js'
 
 const INTERNAL_TABLE_STATEMENTS = [
   'SELECT * FROM _sirannon_changes',

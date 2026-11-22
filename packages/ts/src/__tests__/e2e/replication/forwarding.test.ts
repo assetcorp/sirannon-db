@@ -142,6 +142,28 @@ describe('writes sent to a replica', () => {
     expect(countOrders(replica.dbPath)).toBe(0)
   })
 
+  it('refuse transaction control and a temporary table on the primary, so the next forwarded write reaches the table and every replica', async () => {
+    const { primary, replica } = await forwardingPair()
+
+    const shadow = await replica.engine
+      .execute('CREATE TABLE temp.orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, total INTEGER NOT NULL)')
+      .catch((error: unknown) => error)
+    const quotedShadow = await replica.engine
+      .executeBatch('CREATE TABLE "temp".orders (id INTEGER)', [[]])
+      .catch((error: unknown) => error)
+    const opened = await replica.engine.execute('BEGIN').catch((error: unknown) => error)
+    const committed = await replica.engine.execute('COMMIT').catch((error: unknown) => error)
+
+    expect(shadow).toMatchObject({ code: 'FORBIDDEN_SQL' })
+    expect(quotedShadow).toMatchObject({ code: 'FORBIDDEN_SQL' })
+    expect(opened).toMatchObject({ code: 'REPLICATION_ERROR' })
+    expect(committed).toMatchObject({ code: 'REPLICATION_ERROR' })
+
+    await replica.engine.execute(INSERT_ORDER, [1, 'amara', 10])
+    expect(tableRows(primary.dbPath, 'orders')).toEqual([order(1, 'amara', 10)])
+    await converged(primary, [replica], 'orders', [order(1, 'amara', 10)])
+  })
+
   it('wait on the primary for the write concern that the caller stated, and fail with WRITE_CONCERN_ERROR when it goes unmet', async () => {
     const { scene } = handle
     const primary = await scene.primary(PRIMARY, { schema: [ORDERS_SCHEMA], watch: ['orders'] })

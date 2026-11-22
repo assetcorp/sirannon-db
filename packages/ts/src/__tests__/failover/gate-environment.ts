@@ -25,6 +25,7 @@ export const NODE_B = 'failover-node-b'
 export const NODE_C = 'failover-node-c'
 export const GROUP_ID = 'orders'
 export const CLUSTER_ID = 'cluster-a'
+export const DEFAULT_GATE_SESSION_TTL_MS = 1_500
 export const NODE_D = 'failover-node-d'
 export const NODE_E = 'failover-node-e'
 export const NODE_IDS = [NODE_A, NODE_B, NODE_C] as const
@@ -220,7 +221,7 @@ export async function startNode(
     groupId: GROUP_ID,
     votingDataBearingNodeIds: options.createsGroup ? [...(options.voters ?? NODE_IDS)] : undefined,
     seedSchema: options.seedSchema ?? false,
-    sessionTtlMs: options.sessionTtlMs ?? 1_500,
+    sessionTtlMs: options.sessionTtlMs ?? DEFAULT_GATE_SESSION_TTL_MS,
     maxReplicaLagMs: options.maxReplicaLagMs,
     controllerLeaseTtlMs: options.controllerLeaseTtlMs ?? 1_500,
     controllerTickIntervalMs: options.controllerTickIntervalMs ?? 200,

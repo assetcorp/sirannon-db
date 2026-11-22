@@ -38,4 +38,14 @@ describe('a node that refuses to start', () => {
     expect(withoutEtcd3.message).toContain('pnpm add -E etcd3')
     expect(await env.etcdOracle.keysUnderPrefix()).toEqual([])
   })
+
+  it('refuses a session lease that lapses before the one-second renewal, and writes nothing to etcd', async () => {
+    const env = environment()
+    for (const sessionTtlMs of [1_000, 400, 1_500.5]) {
+      const failure = await startupFailureOf(env, { sessionTtlMs })
+      expect(failure.name).toBe('RangeError')
+      expect(failure.message).toMatch(/coordinator\.sessionTtlMs must be a safe integer above 1000/)
+    }
+    expect(await env.etcdOracle.keysUnderPrefix()).toEqual([])
+  })
 })

@@ -1,4 +1,5 @@
 import { compatibilityAllowsPromotion } from '../coordinator/compatibility.js'
+import { DEFAULT_COORDINATOR_SESSION_TTL_MS } from './constants.js'
 import { applyCoordinatorState, noteCoordinatorContact, refreshCoordinatorState } from './coordinator-authority.js'
 import type { ReplicationEngine } from './engine.js'
 import { unrefTimer } from './timers.js'
@@ -107,6 +108,7 @@ async function bidForControllerLease(engine: ReplicationEngine, bid: ControllerB
       return
     }
     engine.controller.leaseId = acquired.lease.id
+    engine.controller.noteLeaseTaken()
     engine.controllerState = 'active'
   } finally {
     engine.controller.bidding = false
@@ -120,6 +122,12 @@ function reportControllerFailure(engine: ReplicationEngine, err: unknown): void 
   engine.emitError({ error: wrappedErr, operation: 'coordinator-controller', recoverable: true })
 }
 
+function awaitsFirstSession(engine: ReplicationEngine, nodeId: string): boolean {
+  if (engine.controller.seenSessionNodeIds.has(nodeId)) return false
+  const sessionTtlMs = engine.config.coordinator?.sessionTtlMs ?? DEFAULT_COORDINATOR_SESSION_TTL_MS
+  return Date.now() - engine.controller.heldSinceMs < sessionTtlMs
+}
+
 async function runControllerPromotionCheck(engine: ReplicationEngine): Promise<void> {
   const config = engine.config.coordinator
   if (!config) return
@@ -129,6 +137,8 @@ async function runControllerPromotionCheck(engine: ReplicationEngine): Promise<v
   const primaryLive = primaryNodeId
     ? await config.coordinator.getLiveNodeSession(config.clusterId, primaryNodeId)
     : null
+  if (primaryNodeId && primaryLive) engine.controller.seenSessionNodeIds.add(primaryNodeId)
+  if (primaryNodeId && !primaryLive && awaitsFirstSession(engine, primaryNodeId)) return
   const primaryCanKeepDuty =
     primaryNodeId &&
     primaryLive &&

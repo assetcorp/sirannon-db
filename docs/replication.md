@@ -323,7 +323,7 @@ etcdutl snapshot restore snapshot.db --bump-revision 1000000000 --mark-compacted
 
 The bump keeps every revision of the restored cluster above the revisions that the nodes have already read, and marking those revisions compacted ends every watch that the nodes held, so that each node opens its watches again on the restored cluster. The guide sizes a bump of 1,000,000,000 to cover a snapshot that is a week old on a cluster that takes fewer than 1,500 writes per second.
 
-When the nodes reach an etcd cluster that holds none of their sessions, such as one that you built anew, each node registers its session again at its next renewal, which comes every third of its session TTL and at least one second apart. Until the primary's session is back, the controller finds no live primary, so it can promote an in-sync replica in its place.
+When the nodes reach an etcd cluster that holds none of their sessions, such as one that you built anew, each node registers its session again at its next renewal, which comes every third of its session TTL and at least one second apart. A controller that takes the lease waits one full session TTL before it treats a primary whose session it has not yet read as gone, so that the primary keeps its duty once its session is back. When the primary is down, the controller promotes an in-sync replica once that wait ends, while a controller that has read the primary's session promotes a replica once that session lapses, with no wait. The controller measures the wait with its own `sessionTtlMs`, so give every node in the cluster the same value.
 
 ### Upgrading a group from 0.4
 

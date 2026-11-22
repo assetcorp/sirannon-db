@@ -18,4 +18,14 @@ export class ControllerRuntime {
   bidding = false
   /** Drives the controller loop, or is null while the loop is stopped. */
   timer: ReturnType<typeof setInterval> | null = null
+  /** Holds the time, in milliseconds since the Unix epoch, at which this node last took the controller lease. */
+  heldSinceMs = 0
+  /** Lists the nodes whose live session this node has read since it last took the controller lease. */
+  readonly seenSessionNodeIds = new Set<string>()
+
+  /** Records that this node has just taken the controller lease, which starts the wait for every member's session. */
+  noteLeaseTaken(): void {
+    this.heldSinceMs = Date.now()
+    this.seenSessionNodeIds.clear()
+  }
 }

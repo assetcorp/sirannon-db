@@ -633,7 +633,9 @@ export interface ReplicationGroupState {
     pendingVoterNodeIds: string[];
     primaryTerm: bigint;
     repairingNodeIds: string[];
+    storeId: string;
     updatedAtMs: number;
+    version: bigint;
     votingDataBearingNodeIds: string[];
 }
 

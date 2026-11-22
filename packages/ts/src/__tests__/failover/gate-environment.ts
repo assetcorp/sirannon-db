@@ -303,6 +303,19 @@ export async function setEtcdLink(environment: GateEnvironment, nodeId: string, 
   }
 }
 
+export async function pointEtcdLinksAt(environment: GateEnvironment, etcd: EtcdClusterHandle): Promise<void> {
+  for (const nodeId of environment.nodeIds) {
+    for (let index = 0; index < 3; index++) {
+      const upstreamPort = etcd.clientPorts[index]
+      if (upstreamPort === undefined) throw new Error(`The etcd cluster has no member ${index + 1}`)
+      const proxyName = etcdProxyName(nodeId, index)
+      await environment.toxiproxy.setUpstream(proxyName, upstreamPort)
+      await environment.toxiproxy.setEnabled(proxyName, false)
+      await environment.toxiproxy.setEnabled(proxyName, true)
+    }
+  }
+}
+
 export function requireNode(environment: GateEnvironment, nodeId: string): FailoverNodeProcess {
   const node = environment.nodes.get(nodeId)
   if (!node) throw new Error(`Node ${nodeId} is not running`)

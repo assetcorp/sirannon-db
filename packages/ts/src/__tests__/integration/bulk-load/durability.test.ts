@@ -19,6 +19,7 @@ import {
 const CONFIGURED_LEVELS: SynchronousLevel[] = ['off', 'normal', 'full', 'extra']
 const LOAD_DURABILITIES: (BulkLoadDurability | undefined)[] = [undefined, 'off', 'normal']
 const ROWS_PER_LOAD = 200
+const ROWS_PER_ROUND = 1_000
 const LARGE_LOAD_ROWS = 100_000
 const UNKNOWN_DURABILITIES: unknown[] = ['full', 'extra', 'OFF', 'Normal', '', 'off ', 0, 1, true, {}]
 
@@ -35,26 +36,27 @@ afterEach(async () => {
 describe.each(WRITER_PLACEMENTS)('bulk load durability with $label', ({ writerWorker }) => {
   it('loads every row in one commit at the durability asked for, and commits the next write at the configured level', async () => {
     for (const configured of CONFIGURED_LEVELS) {
-      for (const durability of LOAD_DURABILITIES) {
+      const path = workspace.path(configured)
+      const db = await workspace.open(configured, { synchronous: configured, writerWorker })
+      for (const [round, durability] of LOAD_DURABILITIES.entries()) {
         const name = `${configured}-${durability ?? 'default'}`
-        const path = workspace.path(name)
-        const db = await workspace.open(name, { synchronous: configured, writerWorker })
+        const firstId = round * ROWS_PER_ROUND + 1
         const commitsBefore = walCommitCount(path)
 
-        const summary = await db.bulkLoad(RECORD_LEVEL, rowsFrom(1, ROWS_PER_LOAD, 'load'), {
+        const summary = await db.bulkLoad(RECORD_LEVEL, rowsFrom(firstId, ROWS_PER_LOAD, `load-${name}`), {
           checkpoint: false,
           ...(durability === undefined ? {} : { durability }),
         })
         const commitsForLoad = walCommitCount(path) - commitsBefore
-        await recordLevel(db, ROWS_PER_LOAD + 1, 'after')
+        await recordLevel(db, firstId + ROWS_PER_LOAD, `after-${name}`)
 
         expect(summary, name).toEqual({ rowsLoaded: ROWS_PER_LOAD, changes: ROWS_PER_LOAD })
         expect(commitsForLoad, name).toBe(1)
-        expect(countRaw(path), name).toBe(ROWS_PER_LOAD + 1)
-        expect(distinctLevels(path, 'load'), name).toEqual([SQLITE_SYNCHRONOUS[durability ?? 'off']])
-        expect(distinctLevels(path, 'after'), name).toEqual([SQLITE_SYNCHRONOUS[configured]])
-        await db.close()
+        expect(countRaw(path), name).toBe((round + 1) * (ROWS_PER_LOAD + 1))
+        expect(distinctLevels(path, `load-${name}`), name).toEqual([SQLITE_SYNCHRONOUS[durability ?? 'off']])
+        expect(distinctLevels(path, `after-${name}`), name).toEqual([SQLITE_SYNCHRONOUS[configured]])
       }
+      await db.close()
     }
 
     const largePath = workspace.path('large')

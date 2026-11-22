@@ -125,7 +125,7 @@ function reportControllerFailure(engine: ReplicationEngine, err: unknown): void 
 function awaitsFirstSession(engine: ReplicationEngine, nodeId: string): boolean {
   if (engine.controller.seenSessionNodeIds.has(nodeId)) return false
   const sessionTtlMs = engine.config.coordinator?.sessionTtlMs ?? DEFAULT_COORDINATOR_SESSION_TTL_MS
-  return Date.now() - engine.controller.heldSinceMs < sessionTtlMs
+  return performance.now() - engine.controller.heldSinceMs < sessionTtlMs
 }
 
 async function runControllerPromotionCheck(engine: ReplicationEngine): Promise<void> {

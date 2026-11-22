@@ -17,12 +17,48 @@ from sirannon_client.models import (
     BackupTriggerResponse,
     BackupVerifyRequest,
     BackupVerifyResponse,
+    CheckpointResponse,
     StartedResponse,
 )
 
 
 class BackupsOperations(AsyncOperationsBase):
     """These methods call the Backups routes of a Sirannon server."""
+
+    async def checkpoint(
+        self,
+        id: str,
+        *,
+        timeout_ms: int | None = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> CheckpointResponse:
+        """Checkpoints the write-ahead log of the database and answers once the checkpoint
+        ends, with whether a reader stopped it.
+
+        `POST /db/{id}/checkpoint`
+
+        Args:
+            id: The identifier of the database, percent-encoded, so that an identifier
+                holding a slash reaches the database stored under it.
+            timeout_ms: The client waits this many milliseconds for the answer, in place of the client's
+                setting, and 0 waits for as long as the server takes.
+            headers: The client adds these headers to this request, replacing any of the same name.
+
+        Returns:
+            HTTP 200: The server answered the request.
+        """
+        return cast(
+            CheckpointResponse,
+            await self._transport.json(
+                Exchange(
+                    method="POST",
+                    path=f"/db/{path_segment(id)}/checkpoint",
+                    timeout_ms=timeout_ms,
+                    headers=headers,
+                ),
+                {200: CheckpointResponse},
+            ),
+        )
 
     async def get_backup_status(
         self,

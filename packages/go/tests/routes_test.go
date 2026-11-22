@@ -69,6 +69,11 @@ func TestEveryGeneratedRouteReachesTheServer(t *testing.T) {
 	ledger.succeeded("Batch", err)
 	_, err = client.Load(ctx, id, sirannon.LoadRequest{SQL: insertItemSQL, ParamsBatch: []sirannon.LoadRequestParamsBatchItem{{List: []any{int64(4), "load", big + 3, blob}}}})
 	ledger.succeeded("Load", err)
+	checkpointed, err := client.Checkpoint(ctx, id)
+	ledger.succeeded("Checkpoint", err)
+	if checkpointed.Busy || !checkpointed.Emptied || checkpointed.FramesInLog != 0 {
+		t.Fatalf("the checkpoint after the load left the log at %+v, want it emptied", *checkpointed)
+	}
 	_, err = client.ExecuteOperation(ctx, id, "putItem", &sirannon.OperationExecuteRequest{Args: map[string]any{"id": int64(5), "label": "operation", "amount": big + 4, "payload": blob}})
 	ledger.succeeded("ExecuteOperation", err)
 	queried, err := client.Query(ctx, id, sirannon.QueryRequest{SQL: "SELECT id, label, amount, payload FROM items ORDER BY id"})

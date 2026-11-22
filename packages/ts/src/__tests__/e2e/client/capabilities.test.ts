@@ -210,7 +210,7 @@ describe('what a client learns from GET /capabilities', () => {
     expect(proxy.requestsTo('GET', /^\/capabilities$/)).toHaveLength(2)
   })
 
-  it('raises INVALID_RESPONSE for a malformed answer and CONNECTION_ERROR for one that never arrives, sending no statement', async () => {
+  it('raises INVALID_RESPONSE for a malformed answer and TIMEOUT for one that never arrives, sending no statement', async () => {
     const shop = await servedShop()
     const proxy = await recordingProxy(shop.served.port)
     const answers: Array<[label: string, text: string | null, code: string]> = [
@@ -219,7 +219,7 @@ describe('what a client learns from GET /capabilities', () => {
       ['a digest that is a number', '{"capabilities":["query.sql"],"registry":{"digest":5}}', 'INVALID_RESPONSE'],
       ['a body that is not JSON', 'query.sql', 'INVALID_RESPONSE'],
       ['a list in place of the report', '["query.sql"]', 'INVALID_RESPONSE'],
-      ['no answer within the request timeout', null, 'CONNECTION_ERROR'],
+      ['no answer within the request timeout', null, 'TIMEOUT'],
     ]
 
     for (const [label, text, code] of answers) {

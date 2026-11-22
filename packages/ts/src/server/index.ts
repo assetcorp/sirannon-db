@@ -9,6 +9,7 @@ export type {
   BackupVerifyResponse,
 } from './backup-protocol.js'
 export type { BackupRestoreState, BackupRestoreStatus } from './backup-restore-runs.js'
+export type { CheckpointResponse } from './checkpoint-protocol.js'
 export type {
   BatchRequest,
   BatchResponse,

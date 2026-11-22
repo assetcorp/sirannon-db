@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises'
 import type { SQLiteConnection } from '../driver/types.js'
 import { SirannonError } from '../errors.js'
 import { readChainHeadAt, readChainHeads } from './chain.js'
-import { checkpointLog } from './checkpoint.js'
+import { type CheckpointResult, checkpointLog } from './checkpoint.js'
 import type { BackupDestination } from './destination.js'
 import {
   type BackupGroupSource,
@@ -151,9 +151,11 @@ function decide(nodeId: string, preferredNodeId: string | null): BackupTurnDecis
 export async function checkpointWithoutCapturing(request: {
   runExclusive: (op: () => Promise<void>) => Promise<void>
   acquireWriter: () => SQLiteConnection
+  onCheckpoint?: (result: CheckpointResult) => void
 }): Promise<void> {
   await request.runExclusive(async () => {
-    await checkpointLog(request.acquireWriter())
+    const result = await checkpointLog(request.acquireWriter())
+    request.onCheckpoint?.(result)
   })
 }
 

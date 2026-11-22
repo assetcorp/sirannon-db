@@ -32,7 +32,7 @@ The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILE
 | - | `DATABASE_OPEN_FAILED` | Sirannon cannot open a database |
 | `ReadOnlyError` | `READ_ONLY` | A caller writes to a read-only database or calls `live` on one |
 | `QueryError` | `QUERY_ERROR` | SQLite fails to prepare or execute a statement |
-| `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, uses `ATTACH`, `DETACH`, or `VACUUM INTO`, or names the `writable_schema`, `temp_store_directory`, or `data_store_directory` pragma |
+| `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, uses `ATTACH`, `DETACH`, or `VACUUM INTO`, or names the `writable_schema`, `temp_store_directory`, `data_store_directory`, or `wal_checkpoint` pragma. Call `checkpoint()` on the database in place of `PRAGMA wal_checkpoint` |
 | `TransactionError` | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed, such as on a deferred foreign key |
 | - | `TRANSACTION_CLOSED` | A caller uses the `Transaction` handle from a `transaction` callback after that callback returns or throws |
 | - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads, writes, migrates, backs up, or calls `watch` or `live` through the database while a `transaction` callback holds the writer; make the callback's reads and writes through its `Transaction` handle |
@@ -57,6 +57,7 @@ The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILE
 | - | `INVALID_DURABILITY` | A load names a `durability` other than `'off'` or `'normal'` |
 | - | `DURABILITY_RESTORE_FAILED` | Sirannon fails to restore the configured durability after a load commits. After any failed restore, Sirannon tries the restore again before each later write. Whenever that try fails, the write fails with this code without running |
 | - | `BULK_LOAD_IN_TRANSACTION` | A caller calls `bulkLoad` inside a `transaction` callback, where `Transaction.executeBatch` writes the rows instead |
+| - | `CHECKPOINT_IN_TRANSACTION` | A caller calls `checkpoint` inside a `transaction` callback, where SQLite checkpoints no log. Call it once the transaction ends |
 | - | `SNAPSHOT_IN_PROGRESS` | A caller reads or writes while a device-sync snapshot load replaces the database |
 | - | `SHUTDOWN` | A caller uses the registry after it shuts down |
 | - | `SHUTDOWN_ERROR` | One or more databases fail to close during shutdown |

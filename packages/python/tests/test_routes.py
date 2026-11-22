@@ -45,6 +45,7 @@ def writes_and_routes(database_id: str) -> list[RouteCall]:
         ("transaction", (database_id, {"statements": [{"sql": INSERT, "params": list(EXPECTED_ROWS[1])}]}), True),
         ("batch", (database_id, {"sql": INSERT, "paramsBatch": [list(EXPECTED_ROWS[2])]}), True),
         ("load", (database_id, {"sql": INSERT, "paramsBatch": [list(EXPECTED_ROWS[3])]}), True),
+        ("checkpoint", (database_id,), True),
         ("execute_operation", (database_id, "putItem", {"args": operation_args}), True),
         ("query", (database_id, SELECT_ALL), True),
         ("query_operation", (database_id, "itemById", {"args": {"id": 5}}), True),

@@ -124,6 +124,16 @@ export const HTTP_ROUTES: readonly HttpRouteDescription[] = [
   },
   {
     method: 'post',
+    path: '/db/:id/checkpoint',
+    operationId: 'checkpoint',
+    summary:
+      'Checkpoints the write-ahead log of the database and answers once the checkpoint ends, with whether a reader stopped it.',
+    tag: 'Backups',
+    request: null,
+    responses: { 200: 'CheckpointResponse' },
+  },
+  {
+    method: 'post',
     path: '/db/:id/backup',
     operationId: 'triggerBackup',
     summary: 'Starts one turn of the backup checkpoint cycle and answers before the turn finishes.',

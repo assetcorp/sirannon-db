@@ -37,33 +37,57 @@ export async function migrationCaptureTracker(
   return capture.watchedTables.size === 0 ? null : capture
 }
 
+const tablesAwaitingCapture = new WeakMap<ChangeTracker, Set<string>>()
+
 /**
  * Puts back the change-capture triggers of every table that `capture` covers wherever a schema change removed them
  * or left them out of date, and drops the triggers of a covered table that no longer exists under its name, so that
  * a renamed table stops recording its writes under the old name.
  *
+ * Call it at the end of each migration and each rollback step. It also installs the triggers of every table that the
+ * migration created, which waited until then so that the change log leaves out the rows that the migration copied
+ * into them.
+ *
  * @param capture - The tracker from {@link migrationCaptureTracker}.
  * @param conn - The writer connection inside the migration's transaction.
- * @param created - A table that the last statement created, whose triggers wait for the next schema change or the
- * end of the migration, so that the change log leaves out the rows that the migration copies into it.
  * @returns A promise that settles once every covered table carries matching triggers.
  * @internal
  */
-export async function restoreMigrationCapture(
+export async function restoreMigrationCapture(capture: ChangeTracker, conn: SQLiteConnection): Promise<void> {
+  tablesAwaitingCapture.delete(capture)
+  await installMissingCapture(capture, conn, new Set())
+}
+
+async function restoreAfterSchemaStatement(
   capture: ChangeTracker,
   conn: SQLiteConnection,
-  created?: string,
+  tokens: readonly SqlToken[],
+): Promise<void> {
+  let awaiting = tablesAwaitingCapture.get(capture)
+  if (awaiting === undefined) {
+    awaiting = new Set()
+    tablesAwaitingCapture.set(capture, awaiting)
+  }
+  if (isKeyword(tokens[0], 'alter') || isKeyword(tokens[0], 'drop')) awaiting.clear()
+  const created = createdTable(tokens)
+  if (created !== undefined) awaiting.add(created.toLowerCase())
+  await installMissingCapture(capture, conn, awaiting)
+}
+
+async function installMissingCapture(
+  capture: ChangeTracker,
+  conn: SQLiteConnection,
+  awaiting: ReadonlySet<string>,
 ): Promise<void> {
   conn = migrationSchemaConnection(conn)
   const changesTable = capture.changeLogTable
-  const waiting = created?.toLowerCase()
   for (const table of capture.watchedTables) {
     const shape = await capture.adoptTable(conn, table)
     if (shape.columns.length === 0) {
       await dropCdcTriggers(conn, table)
       continue
     }
-    if (table.toLowerCase() === waiting) continue
+    if (awaiting.has(table.toLowerCase())) continue
     if (await cdcTriggersMatch(conn, changesTable, table, shape)) continue
     await dropCdcTriggers(conn, table)
     await installCdcTriggers(conn, changesTable, table, shape)
@@ -75,9 +99,12 @@ export async function restoreMigrationCapture(
  * that `capture` covers.
  *
  * A script that changes the schema runs one statement at a time. Before a statement drops a column of a covered
- * table, the view lifts that table's triggers as {@link columnDropAwareConnection} does, and after each statement
- * that changes the schema, it calls {@link restoreMigrationCapture}, so that every later write in the same migration
- * reaches the change log. A script without a schema change reaches SQLite in one call, unchanged.
+ * table, the view lifts that table's triggers as {@link columnDropAwareConnection} does. After each statement that
+ * changes the schema, it puts back the triggers that the statement removed or left out of date, as
+ * {@link restoreMigrationCapture} does, so that every later write in the same migration reaches the change log. A
+ * table that the migration creates gets its triggers at the next statement that alters or drops a table, an index, a
+ * trigger, or a view, or at the end of the migration, so that the change log leaves out the rows that the migration
+ * copies into it. A script without a schema change reaches SQLite in one call, unchanged.
  *
  * @param capture - The tracker from {@link migrationCaptureTracker}.
  * @param conn - The writer connection.
@@ -117,9 +144,7 @@ async function execKeepingCapture(
   if (!SCHEMA_WORD_RE.test(sql)) return conn.exec(sql)
   for (const statement of splitMigrationScript(sql)) {
     await executeAllowingColumnDrop(capture, schema, columnDropSql(statement.text), () => conn.exec(statement.text))
-    if (changesSchema(statement.tokens)) {
-      await restoreMigrationCapture(capture, conn, createdTable(statement.tokens))
-    }
+    if (changesSchema(statement.tokens)) await restoreAfterSchemaStatement(capture, conn, statement.tokens)
   }
 }
 
@@ -129,10 +154,10 @@ function statementKeepingCapture(
   sql: string,
   stmt: SQLiteStatement,
 ): SQLiteStatement {
-  const created = createdTable(tokenizeSql(sql))
+  const tokens = tokenizeSql(sql)
   return statementCallsAround(stmt, async call => {
     const result = await executeAllowingColumnDrop(capture, conn, columnDropSql(sql), call)
-    await restoreMigrationCapture(capture, conn, created)
+    await restoreAfterSchemaStatement(capture, conn, tokens)
     return result
   })
 }

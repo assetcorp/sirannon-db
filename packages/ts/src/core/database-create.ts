@@ -172,6 +172,7 @@ export async function createDatabaseRuntime(
   const changeSignal = new DatabaseChangeSignal(
     watchFile === undefined ? null : (onChange, onLost) => watchFile(path, onChange, onLost),
     path !== IN_MEMORY_PATH,
+    operation => writerLock.detached(operation),
   )
   writerLock.onRelease(changeSignal.notify)
   const readChangeLog = <T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T> =>

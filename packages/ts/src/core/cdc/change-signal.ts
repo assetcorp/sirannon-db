@@ -26,11 +26,24 @@ export class DatabaseChangeSignal {
    * @param startWatch - Starts the file watch, or `null` when the driver cannot watch files.
    * @param fileSharedWithOtherConnections - `false` for a database that no other process or connection can open,
    * such as an in-memory database, whose every write arrives through the writer lock.
+   * @param detach - Executes background work outside the writer context of the caller that subscribed.
    */
   constructor(
     private readonly startWatch: DatabaseFileWatchStarter | null,
     private readonly fileSharedWithOtherConnections: boolean,
+    private readonly detach: <T>(operation: () => T) => T = operation => operation(),
   ) {}
+
+  /**
+   * Executes feed work outside the writer context of the caller that subscribed, so that callback writes take a
+   * separate writer hold.
+   *
+   * @param operation - The background work to execute.
+   * @returns The value that the operation returns.
+   */
+  detached<T>(operation: () => T): T {
+    return this.detach(operation)
+  }
 
   /**
    * Returns `true` while the signal fires for every committed write, which holds when nothing outside this process

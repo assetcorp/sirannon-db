@@ -110,10 +110,12 @@ export class ChangePoller {
   private readonly fire = (): void => {
     this.timer = null
     if (this.stopListening === null || this.reading !== null) return
-    this.reading = this.read().finally(() => {
-      this.reading = null
-      this.scheduleAfterRead()
-    })
+    this.reading = this.options.signal.detached(() =>
+      this.read().finally(() => {
+        this.reading = null
+        this.scheduleAfterRead()
+      }),
+    )
   }
 
   private async read(): Promise<void> {

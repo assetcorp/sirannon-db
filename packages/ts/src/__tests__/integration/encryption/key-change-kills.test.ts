@@ -187,7 +187,7 @@ describe.skipIf(binding === null)('a key change killed part way on the better-sq
 
   it.each([
     { begun: 0, explanation: 'because the change stopped before the new file replaced the original' },
-    { begun: 1, explanation: 'either the key from before the change or the key from after the change' },
+    { begun: 1, explanation: 'either the key from before the change or the key from after it' },
   ])('explains the key for a 0.4.5 marker left beside the original file with no new file, replacement begun $begun', async ({
     begun,
     explanation,

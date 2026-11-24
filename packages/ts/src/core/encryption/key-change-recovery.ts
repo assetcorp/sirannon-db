@@ -37,7 +37,7 @@ function missingDatabaseFile(path: string): SirannonError {
  * leaves unused, so the new file is gone while the marker holds a record only once the rename has moved the new file
  * into place. When the database file exists and the new file is gone after the replacement began, the new file
  * replaced the original. A marker from Sirannon 0.4.5 or earlier, whose key change deleted the new file first, leaves
- * that case open, so the open names both keys. When the database file exists and so does the new file, or the
+ * that case open, so the open states that the file needs either key. When the database file exists and so does the new file, or the
  * replacement never began, the original stands. In each of these cases the open deletes the marker and then any new
  * file. When the database file is missing, the marker records that the replacement began, and the new file
  * starts with the marker's bytes, the open moves the new file into place and deletes the marker. Any other missing
@@ -106,7 +106,7 @@ const KEY_NEEDED_AFTER_INTERRUPTED_CHANGE: Record<InterruptedKeyChange, string> 
   'key-before-change':
     'the key from before the change, or no key where the file was plaintext, because the change stopped before the new file replaced the original',
   'key-before-or-after-change':
-    'either the key from before the change or the key from after the change, or no key where the file was plaintext or the change removed encryption, because a release of Sirannon up to 0.4.5 wrote the marker, and its files cannot show whether the new file replaced the original',
+    'either the key from before the change or the key from after it, or no key where the file was plaintext or the change removed encryption, because a release of Sirannon up to 0.4.5 wrote the marker, and its files cannot show whether the new file replaced the original',
 }
 
 /**

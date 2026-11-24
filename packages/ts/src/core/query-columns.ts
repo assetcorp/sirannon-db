@@ -8,7 +8,7 @@ import { asQueryError, bindParams } from './query-executor.js'
 import type { Params, QueryWithColumnsOptions, QueryWithColumnsResult } from './types.js'
 
 const COLUMN_DETAILS_UNSUPPORTED_MESSAGE =
-  "This database's driver reports no column details, because its columnDetails capability is false, so queryWithColumns cannot run on it. On node:sqlite the capability needs StatementSync.columns() and StatementSync.setReturnArrays(), which Node.js 24 and Node.js 22.23.5 both have"
+  "This database's driver reports no column details, because its columnDetails capability is false, so queryWithColumns cannot run on it. On node:sqlite the capability needs StatementSync.columns() and StatementSync.setReturnArrays(), which every Node.js release from 22.16.0 has"
 
 function describeLimit(value: unknown): string {
   if (typeof value === 'number' || typeof value === 'bigint' || typeof value === 'boolean') return String(value)

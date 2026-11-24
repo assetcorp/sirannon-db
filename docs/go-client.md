@@ -27,7 +27,7 @@ rows, err := db.Query(ctx, "SELECT id, total FROM orders WHERE id = ?", []any{in
 
 The client returns every integer in a row as an `int64` and every BLOB as a `[]byte`, including an integer beyond 2^53, so you read back each value exactly as SQLite stores it. It sends both types the same way. `Options.Transport` takes `sirannon.TransportWebSocket`, which is the default, or `sirannon.TransportHTTP`.
 
-`QueryWithColumns` returns a `QueryColumnsResponse` that holds each result column's details and each row as a `[]any` in column order, so a join that selects `a.id` and `b.id` keeps both values. Set the fields of `ColumnLimits` to cap a read whose statement someone else wrote:
+`QueryWithColumns` returns a `QueryColumnsResponse` with the details of every result column and each row as a `[]any` in column order, so when a join selects both `a.id` and `b.id`, the row keeps both values. Set the fields of `ColumnLimits` to cap the read when someone else writes the statement:
 
 ```go
 answer, err := db.QueryWithColumns(ctx, "SELECT a.id, b.id, a.label FROM items a JOIN items b ON a.parent = b.id", nil,
@@ -40,7 +40,7 @@ if answer.Truncated != nil {
 }
 ```
 
-Each `ColumnDetail` has `Name`, `DeclaredType`, `Table`, `Column`, and `Database`, with `nil` for a detail that the server's driver doesn't report. A nil field of `ColumnLimits` sets no limit, and the client refuses a limit outside 0 to 2^53-1 with `INVALID_ARGUMENT` before it sends anything.
+Each `ColumnDetail` has `Name`, `DeclaredType`, `Table`, `Column`, and `Database`, and the client sets a field to `nil` when the server reports no value for it. Leave a field of `ColumnLimits` as `nil` to set no limit of that kind. Any limit that you set has to be a whole number from 0 to 2^53-1, because the client fails any other value with `INVALID_ARGUMENT` before it sends the request.
 
 ## Registered operations
 

@@ -131,7 +131,7 @@ QueryWithColumnsResult  { columns: List<ColumnDetail>, rows: List<List<any>>, tr
 ```
 
 - **query / queryOne** run a read on a reader connection and fire query hooks. `queryOne` returns the first row or null.
-- **queryWithColumns** runs a read as `query` does and returns the details of each result column with each row as a list of values; see [Column Reads](#column-reads).
+- **queryWithColumns** runs a read as `query` does and returns the details of each result column, together with each row as a list of values in column order (see [Column Reads](#column-reads)).
 - **execute** runs one write on the writer connection. A read-only database fails with `READ_ONLY`. [Group commit](#group-commit) coalesces writes.
 - **executeBatch** runs `sql` once per parameter set in one writer transaction, returning one result each; the batch is atomic.
 - **executeTransaction** runs a fixed list of statements atomically, sharing a group commit when every statement is groupable.
@@ -206,7 +206,7 @@ Before binding, omitted parameters become an empty list, a list passes through, 
 
 ### Column Reads
 
-`queryWithColumns` must run its read on the connection that `query` uses, under the same read concern, query hooks, statement guard, and metrics. It must fail with `INVALID_READ_LIMIT` before it reads when `maxRows` or `maxBytes` is not an integer from 0 to 2^53 - 1, and with `COLUMN_DETAILS_UNSUPPORTED` when the driver's `columnDetails` capability is `false`. It must count 8 bytes towards `maxBytes` for every value, plus the length of the UTF-8 encoding of a TEXT value and the length of a BLOB. It must return at most `maxRows` rows and set `truncated` to `rows` when the result holds more; otherwise it must stop before the first row that would take the count past `maxBytes` and set `truncated` to `bytes`. `truncated` is null when the read returns every row. [column-reads.json](test-vectors/column-reads.json) holds the byte counts and stopping points.
+`queryWithColumns` must run its read on the connection that `query` uses, under the same read concern, query hooks, statement guard, and metrics. It must fail with `INVALID_READ_LIMIT`, before it reads any row, when `maxRows` or `maxBytes` is anything other than an integer from 0 to 2^53 - 1. It must fail with `COLUMN_DETAILS_UNSUPPORTED` when the driver's `columnDetails` capability is `false`. It must count 8 bytes towards `maxBytes` for every value, and it must add the length of the UTF-8 encoding of each TEXT value and the length of each BLOB. It must stop with `truncated` set to `rows` when its answer has `maxRows` rows and the result has another row. It must leave out the first row that would take the count past `maxBytes`, and stop there with `truncated` set to `bytes`. When both limits stop the read at the same row, `truncated` must be `rows`, and when the read returns every row, `truncated` must be null. [column-reads.json](test-vectors/column-reads.json) holds the byte counts and the stopping points.
 
 ### Reserved Identifiers
 

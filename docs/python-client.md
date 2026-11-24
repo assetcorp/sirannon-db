@@ -25,7 +25,7 @@ async with AsyncSirannonClient("http://localhost:9876") as client:
 
 Every method of `SirannonClient` blocks until the server answers, while the method of the same name on `AsyncSirannonClient` is a coroutine. The client returns every integer as a Python `int`, including an integer beyond 2^53, and every BLOB as `bytes`, so you read back each value exactly as SQLite stores it. It sends both types the same way.
 
-`query_with_columns` returns a `QueryColumnsResponse` that holds each result column's details and each row as a list in column order, so a join that selects `a.id` and `b.id` keeps both values. Pass `max_rows` or `max_bytes` to cap a read whose statement someone else wrote:
+`query_with_columns` returns a `QueryColumnsResponse` with the details of every result column and each row as a list in column order, so when a join selects both `a.id` and `b.id`, the row keeps both values. Pass `max_rows` or `max_bytes` to cap the read when someone else writes the statement:
 
 ```python
 answer = db.query_with_columns(
@@ -38,7 +38,7 @@ if answer.truncated is not None:
     print(f"The read stopped at its {answer.truncated} limit")
 ```
 
-Each column has `name`, `declared_type`, `table`, `column`, and `database`, with `None` for a detail that the server's driver doesn't report. The client refuses a limit that isn't an `int` from 0 to 2^53-1 with `INVALID_ARGUMENT` before it sends anything.
+Each column has `name`, `declared_type`, `table`, `column`, and `database`, and the client sets a field to `None` when the server reports no value for it. Pass each limit as an `int` from 0 to 2^53-1, because the client fails any other value with `INVALID_ARGUMENT` before it sends the request.
 
 ## Registered operations
 

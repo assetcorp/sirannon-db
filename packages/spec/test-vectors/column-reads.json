@@ -1,5 +1,5 @@
 {
-  "description": "Byte counts and stopping points of queryWithColumns. Every value counts 8 bytes, a TEXT value adds the length of its UTF-8 encoding, and a BLOB adds its length. Values use the tagged value encoding. The read applies maxRows before maxBytes.",
+  "description": "These vectors give the byte counts and the stopping points of queryWithColumns. Every value counts 8 bytes towards maxBytes, to which a TEXT value adds the length of its UTF-8 encoding and a BLOB adds its length. Each value uses the tagged value encoding, and queryWithColumns checks maxRows before maxBytes.",
   "valueBytes": [
     { "value": null, "bytes": 8 },
     { "value": 42, "bytes": 8 },

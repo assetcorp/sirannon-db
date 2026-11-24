@@ -33,6 +33,7 @@ const PATIENTS = 600
 const PLAINTEXT_MARKERS = ['diagnosis-', 'CREATE TABLE patients']
 const PAGE_BYTES = 4096
 const AEGIS_RESERVED_BYTES = 64
+const KILLED_CHILD = process.platform === 'win32' ? { status: 1, signal: null } : { status: null, signal: 'SIGKILL' }
 
 const binding = builtSirannonSqliteBindingPath()
 
@@ -229,7 +230,7 @@ process.kill(process.pid, 'SIGKILL')
       ],
       { encoding: 'utf8', timeout: 10_000 },
     )
-    expect(child.signal, child.stderr).toBe('SIGKILL')
+    expect({ status: child.status, signal: child.signal }, child.stderr).toEqual(KILLED_CHILD)
     expect(existsSync(`${path}${mode === 'WAL' ? '-wal' : '-journal'}`)).toBe(true)
     const before = fingerprints(dir)
 

@@ -67,18 +67,18 @@ export function readWithColumns(
   params: readonly unknown[],
 ): ColumnRead {
   const stmt = statement as unknown as StatementWithColumns
-  const columns = columnDetailsOf(stmt)
   const bound = bindableParams(params)
   stmt.setReturnArrays(true)
   try {
     if (!limitsRows(limits)) {
-      return { columns, rows: unlimitedRows(stmt.all(...bound) as unknown[][], limits), truncated: null }
+      const rows = unlimitedRows(stmt.all(...bound) as unknown[][], limits)
+      return { columns: columnDetailsOf(stmt), rows, truncated: null }
     }
     const collector = new RowCollector(limits)
     for (const row of stmt.iterate(...bound) as IterableIterator<unknown[]>) {
       if (!collector.accept(row)) break
     }
-    return { columns, rows: collector.rows, truncated: collector.truncated }
+    return { columns: columnDetailsOf(stmt), rows: collector.rows, truncated: collector.truncated }
   } finally {
     stmt.setReturnArrays(false)
   }

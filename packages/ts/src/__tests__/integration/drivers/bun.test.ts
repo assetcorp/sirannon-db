@@ -119,5 +119,15 @@ describe.skipIf(!bunInstalled)('the Bun driver', () => {
     })
     expect(output.bytes).toMatchObject({ rows: [[stored[0][1]]], truncated: 'bytes' })
     expect(output.reserved).toEqual({ refused: 'FORBIDDEN_SQL' })
+    expect(output.schemaRead).toEqual({
+      columns: [detail('id', 'INTEGER'), detail('label', 'TEXT')],
+      rows: [[1, null]],
+      truncated: null,
+    })
+    expect(output.schemaLimited).toEqual({
+      columns: [detail('id', 'INTEGER'), detail('label', 'TEXT'), detail('amount', 'INTEGER')],
+      rows: [[1, null, null]],
+      truncated: null,
+    })
   }, 90_000)
 })

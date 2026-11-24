@@ -1,3 +1,4 @@
+import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Database } from '../../../core/database.js'
 import type { SQLiteDriver } from '../../../core/driver/types.js'
@@ -88,6 +89,32 @@ async function openItems(driverCase: DriverCase, name: string): Promise<{ db: Da
 
 describe.each(DRIVER_CASES)('queryWithColumns on $label', driverCase => {
   const supported = (): boolean => driverCase.driver().capabilities.columnDetails === true
+
+  it('returns columns from the schema that produced the rows after a cached read changes shape', async () => {
+    const { db, path } = await openItems(driverCase, 'schema')
+    if (!supported()) return
+    const sql = 'SELECT * FROM items ORDER BY id'
+    const empty = 'SELECT * FROM items WHERE id < 0'
+    for (const statement of [sql, empty])
+      for (let repeat = 0; repeat < 4; repeat++) await db.queryWithColumns(statement)
+    const oracle = new BetterSqlite3(path, { readonly: true })
+    try {
+      const limitsToCheck = [undefined, { maxRows: 1 }, { maxRows: 0 }, { maxBytes: 0 }]
+      for (const [index, limits] of limitsToCheck.entries()) {
+        await db.execute(`ALTER TABLE items ADD COLUMN extra${index} TEXT`)
+        const prepared = oracle.prepare(sql)
+        prepared.all()
+        const expected = prepared.columns().map(column => column.name)
+        for (const statement of [sql, empty]) {
+          const result = await db.queryWithColumns(statement, [], limits)
+          expect(result.columns.map(column => column.name)).toEqual(expected)
+          for (const row of result.rows) expect(row).toHaveLength(expected.length)
+        }
+      }
+    } finally {
+      oracle.close()
+    }
+  })
 
   it('returns every column in order, keeps repeated and numeric names apart, and returns each value as query does', async () => {
     const { db, path } = await openItems(driverCase, 'order')

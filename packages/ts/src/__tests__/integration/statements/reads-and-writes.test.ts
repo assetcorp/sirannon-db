@@ -211,6 +211,40 @@ describe.each(DRIVER_PLACEMENTS)('reads and writes with $label', ({ driver, writ
     expect(countRaw(path, 'items')).toBe(SEEDED_ITEMS + 1)
   })
 
+  it('reuses a statement after a read or a returning write fails during execution', async () => {
+    const { db, path } = await openItems()
+    const read = "SELECT id, json_extract(CASE WHEN id = 2 THEN ? ELSE '1' END, '$') AS value FROM items ORDER BY id"
+    const expected = readRaw<{ id: bigint; value: bigint }>(path, read, ['2']).map(row => ({
+      id: Number(row.id),
+      value: Number(row.value),
+    }))
+    const failure = { code: 'QUERY_ERROR', sql: read, message: 'malformed JSON' }
+    for (let connection = 0; connection < DEFAULT_READ_POOL_SIZE; connection++) {
+      await expect(db.query(read, ['invalid'])).rejects.toMatchObject(failure)
+    }
+    for (let connection = 0; connection < DEFAULT_READ_POOL_SIZE; connection++) {
+      expect(await db.query(read, ['2'])).toEqual(expected)
+    }
+    await db.transaction(async tx => {
+      await expect(tx.query(read, ['invalid'])).rejects.toMatchObject(failure)
+      expect(await tx.query(read, ['2'])).toEqual(expected)
+    })
+
+    const insert = 'INSERT INTO items (name, qty) VALUES (?, ?) RETURNING name, qty'
+    await expect(db.transaction(tx => tx.query(insert, ['returned', -1]))).rejects.toMatchObject({
+      code: 'QUERY_ERROR',
+      sql: insert,
+    })
+    const returned = await db.transaction(tx => tx.query(insert, ['returned', 1]))
+    expect(returned).toEqual(
+      readRaw<{ name: string; qty: bigint }>(path, "SELECT name, qty FROM items WHERE name = 'returned'").map(row => ({
+        name: row.name,
+        qty: Number(row.qty),
+      })),
+    )
+    expect(countRaw(path, 'items')).toBe(SEEDED_ITEMS + 1)
+  })
+
   it('applies a batch completely or not at all', async () => {
     const { db, path } = await openItems()
     const before = readRaw(path, 'SELECT * FROM items ORDER BY id')

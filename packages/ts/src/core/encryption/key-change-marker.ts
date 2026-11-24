@@ -4,18 +4,22 @@ import { keyChangeMarkerPath } from './key-change-files.js'
 
 const MARKER_TABLE = 'key_change_marker'
 const MARKER_JOURNAL_SUFFIX = '-journal'
+const MARKER_REMOVED_BEFORE_NEW_FILE_FORMAT = 1
 const HEX_DIGITS = '0123456789abcdef'
 const HEX_BYTE = /^[0-9a-f]{2}$/
 
 /**
- * What the marker of a key change records: the first bytes of the new file, and whether the replacement of the
- * database file has begun.
+ * What the marker of a key change records: the first bytes of the new file, whether the replacement of the database
+ * file has begun, and whether the key change that wrote it deletes the marker before it deletes an unused new file.
+ * Sirannon 0.4.5 and earlier delete the new file first, so a crash between the two deletes leaves a marker beside the
+ * original file with no new file, the same files that a finished rename leaves.
  *
  * @internal
  */
 export interface KeyChangeMarkerState {
   readonly identity: Uint8Array
   readonly replacementBegun: boolean
+  readonly removedBeforeNewFile: boolean
 }
 
 /**
@@ -89,7 +93,7 @@ export async function createKeyChangeMarker(
     await conn.exec('PRAGMA journal_mode = DELETE')
     await conn.exec('PRAGMA synchronous = FULL')
     await conn.exec(
-      `BEGIN IMMEDIATE; CREATE TABLE ${MARKER_TABLE} (identity TEXT NOT NULL, replacement_begun INTEGER NOT NULL, writes INTEGER NOT NULL); INSERT INTO ${MARKER_TABLE} VALUES ('${hexOf(identity)}', 0, 1); COMMIT`,
+      `BEGIN IMMEDIATE; CREATE TABLE ${MARKER_TABLE} (identity TEXT NOT NULL, replacement_begun INTEGER NOT NULL, writes INTEGER NOT NULL); INSERT INTO ${MARKER_TABLE} VALUES ('${hexOf(identity)}', 0, 1); PRAGMA user_version = ${MARKER_REMOVED_BEFORE_NEW_FILE_FORMAT}; COMMIT`,
     )
   } catch (err) {
     await conn.close().catch(() => undefined)
@@ -131,7 +135,12 @@ export async function readKeyChangeMarker(
     if (row === undefined || typeof row.identity !== 'string') return null
     const identity = bytesOfHex(row.identity)
     if (identity === null) return null
-    return { identity, replacementBegun: Number(row.replacement_begun) === 1 }
+    const format = (await (await conn.prepare('PRAGMA user_version')).get()) as { user_version?: unknown } | undefined
+    return {
+      identity,
+      replacementBegun: Number(row.replacement_begun) === 1,
+      removedBeforeNewFile: Number(format?.user_version) >= MARKER_REMOVED_BEFORE_NEW_FILE_FORMAT,
+    }
   } catch {
     return null
   } finally {

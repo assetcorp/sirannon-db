@@ -72,6 +72,7 @@ export function endResponse(res: HttpResponse, write: () => void): void {
  * @internal
  */
 export function endResponseWithBody(res: HttpResponse, writeHead: () => void, body: string): void {
+  markBodyArriving(res, false)
   const size = Buffer.byteLength(body)
   let sent = false
   res.cork(() => {

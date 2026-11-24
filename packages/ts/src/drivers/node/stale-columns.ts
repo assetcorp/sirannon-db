@@ -40,5 +40,11 @@ export function allReadsKeepStaleColumns(databaseClass: typeof DatabaseSync): bo
  */
 export function readAllRows(statement: StatementSync, stepEachRow: boolean, params: readonly unknown[]): unknown[] {
   const bound = params as Parameters<StatementSync['all']>
-  return stepEachRow ? Array.from(statement.iterate(...bound)) : statement.all(...bound)
+  if (!stepEachRow) return statement.all(...bound)
+  const rows = statement.iterate(...bound)
+  try {
+    return Array.from(rows)
+  } finally {
+    rows.return?.()
+  }
 }

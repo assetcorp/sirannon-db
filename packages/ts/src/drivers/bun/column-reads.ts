@@ -25,8 +25,12 @@ function columnDetailsOf(stmt: Statement): ColumnDetail[] {
   }))
 }
 
-function holdsRepeatedName(columns: readonly ColumnDetail[]): boolean {
-  return new Set(columns.map(column => column.name)).size !== columns.length
+function limitedColumnDetailsOf(stmt: Statement): ColumnDetail[] {
+  const columns = columnDetailsOf(stmt)
+  if (new Set(columns.map(column => column.name)).size !== columns.length) {
+    throw new SirannonError(REPEATED_NAMES_MESSAGE, 'COLUMN_DETAILS_UNSUPPORTED')
+  }
+  return columns
 }
 
 /**
@@ -42,18 +46,18 @@ function holdsRepeatedName(columns: readonly ColumnDetail[]): boolean {
  * @internal
  */
 export function readWithColumns(stmt: Statement, limits: ColumnReadLimits, params: readonly unknown[]): ColumnRead {
-  const columns = columnDetailsOf(stmt)
   const bound = bindableParams(params)
   if (!limitsRows(limits)) {
-    return { columns, rows: unlimitedRows(stmt.values(...bound), limits), truncated: null }
+    const rows = unlimitedRows(stmt.values(...bound), limits)
+    return { columns: columnDetailsOf(stmt), rows, truncated: null }
   }
-  if (holdsRepeatedName(columns)) throw new SirannonError(REPEATED_NAMES_MESSAGE, 'COLUMN_DETAILS_UNSUPPORTED')
-  const names = columns.map(column => column.name)
+  let columns: ColumnDetail[] | undefined
   const collector = new RowCollector(limits)
   for (const record of stmt.iterate(...bound)) {
-    const row = new Array<unknown>(names.length)
-    for (let index = 0; index < names.length; index++) row[index] = record[names[index]]
+    columns ??= limitedColumnDetailsOf(stmt)
+    const row = new Array<unknown>(columns.length)
+    for (let index = 0; index < columns.length; index++) row[index] = record[columns[index].name]
     if (!collector.accept(row)) break
   }
-  return { columns, rows: collector.rows, truncated: collector.truncated }
+  return { columns: columns ?? limitedColumnDetailsOf(stmt), rows: collector.rows, truncated: collector.truncated }
 }

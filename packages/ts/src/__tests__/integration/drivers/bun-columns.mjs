@@ -31,6 +31,14 @@ const result = {
   bytes: await outcome(() => db.queryWithColumns('SELECT label FROM items ORDER BY id', [], { maxBytes: 8 + 11 })),
   reserved: await outcome(() => db.queryWithColumns("SELECT * FROM '_sirannon_meta'")),
 }
+await db.execute('CREATE TABLE evolving (id INTEGER)')
+await db.execute('INSERT INTO evolving VALUES (1)')
+const evolving = 'SELECT * FROM evolving'
+for (let repeat = 0; repeat < 4; repeat++) await db.queryWithColumns(evolving)
+await db.execute('ALTER TABLE evolving ADD COLUMN label TEXT')
+result.schemaRead = await db.queryWithColumns(evolving)
+await db.execute('ALTER TABLE evolving ADD COLUMN amount INTEGER')
+result.schemaLimited = await db.queryWithColumns(evolving, [], { maxRows: 1 })
 await sirannon.shutdown()
 
 process.stdout.write(

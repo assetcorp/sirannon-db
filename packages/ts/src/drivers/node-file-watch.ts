@@ -66,25 +66,19 @@ function dispatchFileEvent(
   const entries = directory.entriesByFileName.get(fileNameKey(name))
   if (entries === undefined) return
   if (eventType === 'rename' && isJournalFileName(name)) {
-    void notifyIfJournalExists(join(path, name), directory, [...entries])
+    void notifyIfJournalExists(join(path, name), entries)
     return
   }
   for (const entry of entries) notifyEntry(entry)
 }
 
-async function notifyIfJournalExists(
-  journalPath: string,
-  directory: DirectoryWatch,
-  entries: readonly FileWatchEntry[],
-): Promise<void> {
+async function notifyIfJournalExists(journalPath: string, entries: ReadonlySet<FileWatchEntry>): Promise<void> {
   try {
     await stat(journalPath)
   } catch {
     return
   }
-  for (const entry of entries) {
-    if (directory.entries.has(entry)) notifyEntry(entry)
-  }
+  for (const entry of entries) notifyEntry(entry)
 }
 
 async function fileSignature(filePaths: readonly string[]): Promise<string> {

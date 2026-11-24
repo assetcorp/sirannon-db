@@ -64,11 +64,6 @@ export class ConnectionPool {
     if (unavailable !== null) throw unavailable
   }
 
-  private rejectionWhenUnavailable(): Promise<never> | null {
-    const unavailable = poolUnavailableError(this.closed, this.isSuspended, this.reopenFailure)
-    return unavailable === null ? null : Promise.reject(unavailable)
-  }
-
   /**
    * Returns the next open reader in rotation, or the writer for a driver that opens one connection per file.
    *
@@ -81,7 +76,9 @@ export class ConnectionPool {
       if (this.readerCapacity > 0) {
         throw new ConnectionPoolError('No reader connection is open yet; wait for readerReady() before a read')
       }
-      if (!this.writer) throw new ConnectionPoolError('No connections available')
+      if (!this.writer) {
+        throw new ConnectionPoolError('No connections available')
+      }
       return this.writer
     }
     const reader = this.readers[this.readerIndex % this.readers.length]
@@ -97,8 +94,11 @@ export class ConnectionPool {
    */
   readerReady(): Promise<void> | null {
     if (this.readers.length > 0 || this.readerCapacity === 0) return null
-    const unavailable = this.rejectionWhenUnavailable()
-    if (unavailable !== null) return unavailable
+    try {
+      this.ensureAvailable()
+    } catch (err) {
+      return Promise.reject(err)
+    }
     this.readerOpening ??= this.addReader().finally(() => {
       this.readerOpening = null
     })
@@ -165,8 +165,11 @@ export class ConnectionPool {
    */
   writerReady(): Promise<void> | null {
     if (!this.writerClosedWhileIdle) return null
-    const unavailable = this.rejectionWhenUnavailable()
-    if (unavailable !== null) return unavailable
+    try {
+      this.ensureAvailable()
+    } catch (err) {
+      return Promise.reject(err)
+    }
     this.writerOpening ??= this.openWriterAgain().finally(() => {
       this.writerOpening = null
     })
@@ -281,16 +284,6 @@ export class ConnectionPool {
   connections(): readonly SQLiteConnection[] {
     this.ensureAvailable()
     return this.writer ? [this.writer, ...this.readers] : [...this.readers]
-  }
-
-  /** Returns what `operation` returns, and keeps every connection open until it settles, as a read keeps its reader. */
-  async whileConnectionsOpen<T>(operation: () => Promise<T>): Promise<T> {
-    this.readsInFlight++
-    try {
-      return await operation()
-    } finally {
-      this.releaseReader()
-    }
   }
 
   /**

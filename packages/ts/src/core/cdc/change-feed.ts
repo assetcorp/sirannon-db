@@ -44,8 +44,6 @@ export interface ChangeFeed {
   requestPrune(): void
   /** Stops reading for good. */
   stop(): void
-  /** Resolves once the read under way, with its dispatch and prune, has finished. */
-  settled(): Promise<void>
 }
 
 /**
@@ -135,9 +133,6 @@ export function startChangeFeed(options: ChangeFeedOptions): ChangeFeed {
       removeBoundaryListener()
       poller.stop()
       prunes.pause()
-    },
-    settled() {
-      return poller.settled()
     },
   }
 }

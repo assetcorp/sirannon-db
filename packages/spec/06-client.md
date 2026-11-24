@@ -40,7 +40,7 @@ TopologyAwareClientOptions extends ClientOptions {
 }
 ```
 
-`SirannonClient` connects to the single `url` and never routes between nodes; passing it `endpoints`, `primary`, `replicas`, `readPreference`, `discovery`, or `readConcern` fails with `INVALID_ARGUMENT`. `TopologyAwareClient` routes between the nodes of a replication group. An implementation that splits its package into entry points must place `TopologyAwareClient` behind an entry point of its own and prove that the browser-facing entry point does not reach it, so no browser bundle carries routing code or an internal node address.
+`SirannonClient` connects to the single `url` and never routes between nodes; passing it `endpoints`, `primary`, `replicas`, `readPreference`, `discovery`, or `readConcern` fails with `INVALID_ARGUMENT`. `TopologyAwareClient` routes between the nodes of a replication group. An implementation that splits its package into entry points must place `TopologyAwareClient` behind a separate entry point and prove that the browser-facing entry point does not reach it, so no browser bundle carries routing code or an internal node address.
 
 `headers` applies to HTTP requests, to coordinator discovery requests, and to the WebSocket upgrade in a runtime whose WebSocket carries a handshake header. A client constructed with `headers`, no `webSocketProtocols`, and the WebSocket transport in a runtime that carries none must fail at construction with `INVALID_ARGUMENT` and name `webSocketProtocols`. A client given both must send `headers` on its HTTP requests and the subprotocols on the upgrade.
 
@@ -81,7 +81,7 @@ A first argument that names a registered operation runs that operation. `query` 
 
 ### Refusing SQL Before It Is Sent
 
-A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `queryWithColumns`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. Closing a database must cancel a read of that answer still in progress, and must fail each statement that waits for it with `TRANSPORT_ERROR`. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
+A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `queryWithColumns`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. Closing a database must cancel a read of that answer still in progress, and must fail each statement that waits for it with `TRANSPORT_ERROR`. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses those statements (see [05-server.md](05-server.md)), because a hand-written client performs no check.
 
 ### Live Queries
 

@@ -33,7 +33,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, used `ATTACH`, `DETACH`, or `VACUUM INTO`, named the `writable_schema`, `temp_store_directory`, `data_store_directory`, or `wal_checkpoint` pragma, opened, ended, or marked a transaction with `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, or `RELEASE`, or created or dropped a temporary table, view, index, or trigger. |
 | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed. |
 | `TRANSACTION_CLOSED` | A call reached a `Transaction` after its callback returned or threw. |
-| `WRITER_HELD_BY_CALLBACK` | A call through the database needed the writer while a `transaction` callback held it, on a runtime that cannot tell the callback's own calls apart from other callers. |
+| `WRITER_HELD_BY_CALLBACK` | A call through the database needed the writer while a `transaction` callback held it, on a runtime that cannot tell the calls that the callback makes apart from other callers. |
 | `HOOK_DENIED` | A hook rejected the operation. |
 | `CDC_ERROR` | The change-data-capture pipeline hit an unrecoverable error. |
 | `BACKUP_ERROR` | A backup operation failed. |
@@ -76,7 +76,7 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `WRITER_WORKER_POST_FAILED` | The host could not hand the operation to the writer. |
 | `WRITER_WORKER_NO_PORT` | The writer entry point started outside a worker thread. |
 
-A runtime whose writer isolation differs may raise further internal codes for its own mechanism; the outcome codes above are the normative surface.
+A runtime whose writer isolation differs may raise further internal codes for the mechanism that it uses; the outcome codes above are the normative surface.
 
 ### Migrations
 

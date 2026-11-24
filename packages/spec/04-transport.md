@@ -238,7 +238,7 @@ In static mode the primary runs the gRPC server and replicas connect as clients:
 
 ### Peer Identity
 
-The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying the sender's `node_id`, `role`, and `encrypted`, and in coordinator mode also `group_id`, `primary_term`, and `protocol_version`. A node must not send or accept any other message before the `Hello`. The server replies with its own `Hello` on the first client `Hello`. If the first message is not a `Hello`, the receiver terminates the stream. A client must receive the server's `Hello` on both its `Replicate` and `Sync` streams within `helloTimeoutMs` of opening them, and otherwise it must close the connection and redial as it does on stream loss. A server must terminate a stream whose first message takes longer than `helloTimeoutMs` to arrive. When mutual TLS is enabled, the authenticated peer identity must match the node identity through the certificate common name.
+The first message on every `Replicate` or `Sync` stream must be a `Hello` carrying the sender's `node_id`, `role`, and `encrypted`, and in coordinator mode also `group_id`, `primary_term`, and `protocol_version`. A node must not send or accept any other message before the `Hello`. The server sends a `Hello` back when the first client `Hello` arrives. If the first message is not a `Hello`, the receiver terminates the stream. A client must receive the server's `Hello` on both its `Replicate` and `Sync` streams within `helloTimeoutMs` of opening them, and otherwise it must close the connection and redial as it does on stream loss. A server must terminate a stream whose first message takes longer than `helloTimeoutMs` to arrive. When mutual TLS is enabled, the authenticated peer identity must match the node identity through the certificate common name.
 
 ### Stream Invariant
 
@@ -248,7 +248,7 @@ At most one active `Replicate` stream per peer. When a new stream opens for a pe
 
 ## Authentication
 
-Implementations must support mutual TLS. The gRPC server sends a certificate and, when a CA certificate is configured, verifies client certificates; a client sends its own certificate. An insecure mode with no TLS may be provided for local development; it is non-normative and requires explicit opt-in. TLS is on by default.
+Implementations must support mutual TLS. The gRPC server sends a certificate and, when a CA certificate is configured, verifies client certificates; a client sends a client certificate. An insecure mode with no TLS may be provided for local development; it is non-normative and requires explicit opt-in. TLS is on by default.
 
 Production coordinator access must use TLS, authenticated Sirannon identities, a dedicated coordinator key prefix per cluster, and credentials limited to that prefix. Insecure coordinator access is allowed only for development and test.
 

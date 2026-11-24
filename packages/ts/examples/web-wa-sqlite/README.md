@@ -6,7 +6,7 @@ A SQL console in the page executes statements against that same local database. 
 
 ## Setup
 
-To start this example, you need Node.js 22 or newer and pnpm.
+To start this example, you need Node.js 22.16.0 or newer and pnpm.
 
 The server and the browser app both import `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 

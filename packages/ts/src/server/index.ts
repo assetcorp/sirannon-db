@@ -18,6 +18,7 @@ export type {
   ExecuteResponse,
   LoadRequest,
   LoadResponse,
+  QueryColumnsResponse,
   QueryRequest,
   QueryResponse,
   TransactionRequest,

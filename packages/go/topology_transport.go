@@ -114,6 +114,19 @@ func (t *topologyTransport) query(ctx context.Context, call statementCall) ([]Ro
 	return rows, err
 }
 
+func (t *topologyTransport) queryColumns(ctx context.Context, call columnsCall) (QueryColumnsResponse, error) {
+	if call.readConcern != nil {
+		return QueryColumnsResponse{}, newError(CodeInvalidArgument, perQueryReadConcernRefused)
+	}
+	var answer QueryColumnsResponse
+	err := t.onRead(ctx, "", func(transport databaseTransport) error {
+		var err error
+		answer, err = transport.queryColumns(ctx, call)
+		return err
+	})
+	return answer, err
+}
+
 func (t *topologyTransport) execute(ctx context.Context, call statementCall) ([]ExecuteResult, error) {
 	var results []ExecuteResult
 	err := t.onWrite(ctx, func(transport databaseTransport) error {

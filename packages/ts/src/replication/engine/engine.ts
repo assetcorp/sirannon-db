@@ -5,7 +5,13 @@ import type { SQLiteConnection } from '../../core/driver/types.js'
 import { LWWResolver } from '../../core/sync/conflict/lww.js'
 import { HLC } from '../../core/sync/hlc.js'
 import type { Transaction } from '../../core/transaction.js'
-import type { ExecuteResult, Params, QueryOptions } from '../../core/types.js'
+import type {
+  ExecuteResult,
+  Params,
+  QueryOptions,
+  QueryWithColumnsOptions,
+  QueryWithColumnsResult,
+} from '../../core/types.js'
 import type { CoordinatorWatchDisposer, ReplicationGroupState } from '../coordinator/types.js'
 import { ReplicationLog } from '../log.js'
 import { generateNodeId } from '../node-id.js'
@@ -13,31 +19,12 @@ import { PeerTracker } from '../peer-tracker.js'
 import type {
   ConflictResolver,
   ForwardedTransactionResult,
-  ReplicationAck,
-  ReplicationBatch,
   ReplicationConfig,
   ReplicationErrorEvent,
   ReplicationStatus,
-  SyncAck,
-  SyncBatch,
-  SyncComplete,
-  SyncRequest,
   SyncState,
 } from '../types.js'
-import {
-  DEFAULT_ACK_TIMEOUT_MS,
-  DEFAULT_BATCH_INTERVAL_MS,
-  DEFAULT_BATCH_SIZE,
-  DEFAULT_CATCH_UP_DEADLINE_MS,
-  DEFAULT_MAX_BATCH_CHANGES,
-  DEFAULT_MAX_CLOCK_DRIFT_MS,
-  DEFAULT_MAX_CONCURRENT_SYNCS,
-  DEFAULT_MAX_PENDING_BATCHES,
-  DEFAULT_MAX_SYNC_DURATION_MS,
-  DEFAULT_MAX_SYNC_LAG_BEFORE_READY,
-  DEFAULT_SYNC_ACK_TIMEOUT_MS,
-  DEFAULT_SYNC_BATCH_SIZE,
-} from './constants.js'
+import { queryWithColumns } from './column-reads.js'
 import { ControllerRuntime } from './controller-runtime.js'
 import {
   GroupStateRefresh,
@@ -49,26 +36,18 @@ import { assertCoordinatorModeConfig } from './coordinator-lifecycle.js'
 import { markCoordinatorSyncReady } from './coordinator-membership.js'
 import { execute, executeBatch, executeTransaction, forwardStatements, query, transaction } from './data-api.js'
 import { InSyncState } from './in-sync-state.js'
-import { initialSyncState } from './internal-types.js'
+import { type CoordinatorStampedMessage, initialSyncState } from './internal-types.js'
 import { LocalExecutor } from './local-executor.js'
 import { MemberAddresses } from './member-addresses.js'
 import { nodeStatus } from './node-health.js'
 import { RejoinState } from './rejoin-state.js'
 import { SenderLoop } from './sender-loop.js'
+import { engineSettings } from './settings.js'
 import { startEngine, stopEngine } from './startup.js'
 import { SyncJoiner } from './sync-joiner.js'
 import { SyncServer } from './sync-server.js'
 import type { TableStreamDigest } from './sync-verification.js'
 import { TermHistory } from './term-history.js'
-
-type CoordinatorStampedMessage =
-  | ReplicationBatch
-  | ReplicationAck
-  | ForwardedTransactionResult
-  | SyncRequest
-  | SyncBatch
-  | SyncComplete
-  | SyncAck
 
 /**
  * Coordinates replication for a single database node.
@@ -208,19 +187,20 @@ export class ReplicationEngine extends EventEmitter {
       appliedSchemaChanges: config.coordinator ? 'logged' : 'unlogged',
     })
     this.defaultResolver = config.defaultConflictResolver ?? new LWWResolver()
-    this.batchSize = config.batchSize ?? DEFAULT_BATCH_SIZE
-    this.batchIntervalMs = config.batchIntervalMs ?? DEFAULT_BATCH_INTERVAL_MS
-    this.maxClockDriftMs = config.maxClockDriftMs ?? DEFAULT_MAX_CLOCK_DRIFT_MS
-    this.maxPendingBatches = config.maxPendingBatches ?? DEFAULT_MAX_PENDING_BATCHES
-    this.maxBatchChanges = config.maxBatchChanges ?? DEFAULT_MAX_BATCH_CHANGES
-    this.ackTimeoutMs = config.ackTimeoutMs ?? DEFAULT_ACK_TIMEOUT_MS
-    this.initialSync = config.initialSync ?? true
-    this.syncBatchSize = config.syncBatchSize ?? DEFAULT_SYNC_BATCH_SIZE
-    this.maxConcurrentSyncs = config.maxConcurrentSyncs ?? DEFAULT_MAX_CONCURRENT_SYNCS
-    this.maxSyncDurationMs = config.maxSyncDurationMs ?? DEFAULT_MAX_SYNC_DURATION_MS
-    this.maxSyncLagBeforeReady = config.maxSyncLagBeforeReady ?? DEFAULT_MAX_SYNC_LAG_BEFORE_READY
-    this.syncAckTimeoutMs = config.syncAckTimeoutMs ?? DEFAULT_SYNC_ACK_TIMEOUT_MS
-    this.catchUpDeadlineMs = config.catchUpDeadlineMs ?? DEFAULT_CATCH_UP_DEADLINE_MS
+    const settings = engineSettings(config)
+    this.batchSize = settings.batchSize
+    this.batchIntervalMs = settings.batchIntervalMs
+    this.maxClockDriftMs = settings.maxClockDriftMs
+    this.maxPendingBatches = settings.maxPendingBatches
+    this.maxBatchChanges = settings.maxBatchChanges
+    this.ackTimeoutMs = settings.ackTimeoutMs
+    this.initialSync = settings.initialSync
+    this.syncBatchSize = settings.syncBatchSize
+    this.maxConcurrentSyncs = settings.maxConcurrentSyncs
+    this.maxSyncDurationMs = settings.maxSyncDurationMs
+    this.maxSyncLagBeforeReady = settings.maxSyncLagBeforeReady
+    this.syncAckTimeoutMs = settings.syncAckTimeoutMs
+    this.catchUpDeadlineMs = settings.catchUpDeadlineMs
     this.resumeFromSeq = config.resumeFromSeq
     this.snapshotConnectionFactory = config.snapshotConnectionFactory
 
@@ -288,6 +268,19 @@ export class ReplicationEngine extends EventEmitter {
    */
   query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]> {
     return query<T>(this, sql, params, options)
+  }
+
+  /**
+   * Executes a read and returns each column's details with each row as an array, stopping at `maxRows` and
+   * `maxBytes`, and throws when this node is still syncing or cannot meet the read concern.
+   *
+   * @param sql - The statement to execute.
+   * @param params - The values to bind to the statement, named or positional.
+   * @param options - The read concern and the two limits for this statement.
+   * @returns The columns, the rows, and the limit that stopped the read.
+   */
+  queryWithColumns(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult> {
+    return queryWithColumns(this, sql, params, options)
   }
 
   /**

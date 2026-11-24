@@ -427,6 +427,67 @@
         ],
         "description": "The totals for a bulk load, which Sirannon sums across rows so that a large load keeps no per-row results in memory."
       },
+      "ColumnDetail": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The column's name in the result, which `AS` sets and which can repeat across columns."
+          },
+          "declaredType": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The type that the table's schema declares for the source column, or `null` for an expression or when the driver cannot report it."
+          },
+          "table": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The table that the value comes from, or `null` for an expression or when the driver cannot report it."
+          },
+          "column": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The column of that table that the value comes from, or `null` for an expression or when the driver cannot report it."
+          },
+          "database": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The schema that holds that table, such as `main`, or `null` for an expression or when the driver cannot report it."
+          }
+        },
+        "required": [
+          "name",
+          "declaredType",
+          "table",
+          "column",
+          "database"
+        ],
+        "description": "Describes one column of a result, in the order that the statement returns its columns."
+      },
       "ExecuteResponse": {
         "type": "object",
         "properties": {
@@ -464,6 +525,47 @@
           "__sirannon_int"
         ],
         "description": "An integer outside the range from -(2^53 - 1) to 2^53 - 1, which JSON numbers cannot hold exactly. The server and the client put such an integer in this envelope wherever it appears in a row, a change event, a bind parameter, or a subscription filter. Decode it into a 64-bit integer, and send an integer outside that range in the same envelope."
+      },
+      "QueryColumnsResponse": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ColumnDetail"
+            },
+            "description": "One entry for each result column, in order, with `null` for a detail that SQLite or the driver does not report."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {}
+            },
+            "description": "One array for each row, holding the row's values in column order, with blobs and large integers in their tagged wire form."
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rows",
+                  "bytes"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`rows` or `bytes` when that limit stopped the read before its last row, and `null` when the answer holds every row."
+          }
+        },
+        "required": [
+          "columns",
+          "rows",
+          "truncated"
+        ],
+        "description": "The body that `POST /db/{id}/query` returns for a request with `shape` set to `columns`."
       },
       "QueryResponse": {
         "type": "object",
@@ -980,6 +1082,21 @@
           "readConcern": {
             "$ref": "#/components/schemas/ReadConcern",
             "description": "The read concern that this read requires."
+          },
+          "shape": {
+            "type": "string",
+            "enum": [
+              "columns"
+            ],
+            "description": "`columns` to receive each column's details and each row as an array of values in column order; it applies to `sql` alone."
+          },
+          "maxRows": {
+            "type": "number",
+            "description": "The most rows that a `columns` result holds, as a non-negative safe integer."
+          },
+          "maxBytes": {
+            "type": "number",
+            "description": "The most bytes of values that a `columns` result holds, as a non-negative safe integer."
           }
         },
         "required": [
@@ -1004,6 +1121,9 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/QueryResponse"
+              },
+              {
+                "$ref": "#/components/schemas/QueryColumnsResponse"
               },
               {
                 "$ref": "#/components/schemas/ExecuteResponse"

@@ -6,6 +6,7 @@ import { EncryptionError } from '../../core/encryption/errors.js'
 import { reportEncryptedPageFailures } from '../../core/encryption/page-errors.js'
 import { ExtensionError } from '../../core/errors.js'
 import { expoBindParams } from './bind.js'
+import { readWithColumns } from './column-reads.js'
 import { keyExpoConnection, probeExpoDatabase, readUnkeyedExpoSchema } from './encryption.js'
 import { expoDatabaseFiles } from './files.js'
 
@@ -27,6 +28,7 @@ export function expoSqlite(): SQLiteDriver {
       steppedCopy: false,
       rowCounts: false,
       encryption: true,
+      columnDetails: true,
     },
     files: expoDatabaseFiles,
     async open(path, options) {
@@ -78,6 +80,10 @@ export function expoSqlite(): SQLiteDriver {
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
               const row = await dbHandle.getFirstAsync<T>(sql, expoBindParams(params))
               return (row ?? undefined) as T | undefined
+            },
+
+            async allWithColumns(limits, ...params) {
+              return readWithColumns(dbHandle, sql, params, limits)
             },
 
             async run(...params: unknown[]) {

@@ -7,7 +7,8 @@ import (
 )
 
 // Query sends POST /db/{id}/query: Runs one read statement and returns its rows, on a server that
-// accepts SQL.
+// accepts SQL. With shape set to columns, it returns a QueryColumnsResponse that holds each column and
+// each row as an array, stopping at maxRows and maxBytes.
 //
 // The route carries a SQL statement, so the client reads GET /capabilities once per server and fails
 // with SQL_NOT_ACCEPTED, sending nothing, when the server leaves out query.sql.

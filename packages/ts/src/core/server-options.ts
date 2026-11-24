@@ -3,7 +3,15 @@ import type { DatabaseOperations, OperationRegistry } from './operation-registry
 import type { ApplyResult, ConflictResolver, ReplicationBatch } from './sync/types.js'
 import type { AppliedMigrationRow } from './system-catalog/index.js'
 import type { Transaction } from './transaction.js'
-import type { ClusterStatusInfo, ExecuteResult, NodeHealth, Params, QueryOptions } from './types.js'
+import type {
+  ClusterStatusInfo,
+  ExecuteResult,
+  NodeHealth,
+  Params,
+  QueryOptions,
+  QueryWithColumnsOptions,
+  QueryWithColumnsResult,
+} from './types.js'
 
 /** The request details that the server passes to the authenticate hook.
  * @public
@@ -93,6 +101,22 @@ export interface ServerExecutionTarget {
    * {@link ServerExecutionTarget.query} and encodes the rows in a second pass.
    */
   queryForWire?(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>
+  /**
+   * Executes a read and returns each column's details with each row as an array, stopping at `maxRows` and
+   * `maxBytes`. When the target has neither this method nor
+   * {@link ServerExecutionTarget.queryWithColumnsForWire}, the server answers a request with `shape` set to `columns`
+   * with `COLUMN_DETAILS_UNSUPPORTED`.
+   */
+  queryWithColumns?(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult>
+  /**
+   * Executes the read of {@link ServerExecutionTarget.queryWithColumns} and returns its rows already encoded for the
+   * wire, so that the server sends them without encoding them again.
+   */
+  queryWithColumnsForWire?(
+    sql: string,
+    params?: Params,
+    options?: QueryWithColumnsOptions,
+  ): Promise<QueryWithColumnsResult>
   /** Executes one write and returns the change count and the row id of the last inserted row. */
   execute(sql: string, params?: Params, options?: QueryOptions): Promise<ExecuteResult>
   /** Calls a function inside one transaction. */

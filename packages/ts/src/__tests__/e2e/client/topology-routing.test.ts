@@ -198,7 +198,20 @@ describe('a topology client discovering its group from a coordinator', () => {
     const perCallConcern = await codeOf(
       majority.database(DATABASE_ID).query('SELECT 1', [], { readConcern: { level: 'local' } }),
     )
+    const columnsFromPrimary = await linearizable
+      .database(DATABASE_ID)
+      .queryWithColumns('SELECT customer FROM orders ORDER BY id', [], { maxRows: 1 })
+    const columnsFromReplica = await majority
+      .database(DATABASE_ID)
+      .queryWithColumns('SELECT customer FROM orders ORDER BY id', [], { maxRows: 1 })
+    const columnsPerCallConcern = await codeOf(
+      majority.database(DATABASE_ID).queryWithColumns('SELECT 1', [], { readConcern: { level: 'local' } }),
+    )
     for (const client of [majority, local, linearizable, nearest]) client.close()
+
+    expect(columnsFromPrimary).toMatchObject({ rows: [['primary-row']], truncated: 'rows' })
+    expect(columnsFromReplica).toMatchObject({ rows: [['replica-a-row']], truncated: null })
+    expect(columnsPerCallConcern).toBe('INVALID_ARGUMENT')
 
     expect(answers.majority).toEqual(new Set(['replica-a-row']))
     expect([...answers.local].sort()).toEqual(['replica-a-row', 'replica-b-row'])

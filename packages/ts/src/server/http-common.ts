@@ -160,6 +160,7 @@ export function httpStatusForError(err: SirannonError): number {
     case 'TRANSACTION_ERROR':
     case 'INVALID_DURABILITY':
     case 'INVALID_SYNCHRONOUS':
+    case 'INVALID_READ_LIMIT':
     case 'BATCH_VALIDATION_ERROR':
       return 400
     case 'STALE_PRIMARY':
@@ -174,6 +175,7 @@ export function httpStatusForError(err: SirannonError): number {
       return 409
     case 'BACKUP_UNSUPPORTED':
     case 'ENCRYPTION_UNSUPPORTED':
+    case 'COLUMN_DETAILS_UNSUPPORTED':
       return 501
     case 'BACKUP_DESTINATION_ERROR':
       return 502

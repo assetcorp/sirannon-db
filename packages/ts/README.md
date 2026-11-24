@@ -143,6 +143,12 @@ const balance = await db.transaction(async tx => {
 
 Group statements into a transaction through `transaction()` or `executeTransaction()`. Every call shares Sirannon's connections, so `query` and `execute` refuse `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, and `RELEASE` with `FORBIDDEN_SQL`, because a transaction opened that way would take in the next caller's writes. They refuse a `CREATE` or `DROP` of a temporary table, view, index, or trigger for the same reason, because the object would stay on the connection and hide a table of the same name from later callers.
 
+`queryWithColumns` returns each column's name, declared type, and source table with each row as an array in column order, so two columns that share a name keep separate values. Its `maxRows` and `maxBytes` options stop a read at a row count or at a size, which suits a statement that someone else wrote:
+
+```ts
+const { columns, rows, truncated } = await db.queryWithColumns('SELECT * FROM orders', [], { maxRows: 500 })
+```
+
 `bulkLoad` writes a large import in one transaction under relaxed durability, and then it restores the durability level that you configured. Read the [bulk load guide](https://sirannon.sondelali.com/docs/bulk-load) for the details, and the guides on [migrations](https://sirannon.sondelali.com/docs/migrations) and on [hooks, metrics, and the multi-tenant lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) for the rest of the core engine. Backups have a [guide of their own](https://sirannon.sondelali.com/docs/backups).
 
 ## Change data capture and live queries

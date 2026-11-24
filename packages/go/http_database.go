@@ -40,6 +40,18 @@ func (d *httpDatabase) query(ctx context.Context, call statementCall) ([]Row, er
 	return rowsOf(answer.Rows), nil
 }
 
+func (d *httpDatabase) queryColumns(ctx context.Context, call columnsCall) (QueryColumnsResponse, error) {
+	body, err := columnsRequest(call)
+	if err != nil {
+		return QueryColumnsResponse{}, err
+	}
+	var answer QueryColumnsResponse
+	if err := d.transport.postJSON(ctx, d.prefix+"/query", body, &answer); err != nil {
+		return QueryColumnsResponse{}, err
+	}
+	return checkColumnsAnswer(answer)
+}
+
 func (d *httpDatabase) execute(ctx context.Context, call statementCall) ([]ExecuteResult, error) {
 	if call.name != "" {
 		var answer OperationExecuteResponse

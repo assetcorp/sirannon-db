@@ -4,11 +4,13 @@ import type {
   BatchResponse,
   ExecuteResponse,
   LoadResponse,
+  QueryColumnsResponse,
   QueryResponse,
   TransactionResponse,
 } from '../server/protocol.js'
 import type { TopologyRouting } from './cluster-routing.js'
 import { shouldRefreshRouting } from './cluster-routing.js'
+import { COLUMN_READS_UNSUPPORTED_MESSAGE, type ColumnQueryRequest } from './column-answers.js'
 import { TopologySubscriptionSet } from './topology-subscriptions.js'
 import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from './types.js'
 import { RemoteError } from './types.js'
@@ -113,6 +115,14 @@ export class TopologyAwareTransport implements Transport {
       }
       throw err
     }
+  }
+
+  async queryWithColumns(sql: string, params?: Params, request?: ColumnQueryRequest): Promise<QueryColumnsResponse> {
+    return this.onReadTransport((transport, level) => {
+      if (!transport.queryWithColumns) throw new RemoteError('TRANSPORT_ERROR', COLUMN_READS_UNSUPPORTED_MESSAGE)
+      const { readConcern: _ignored, ...limits } = request ?? {}
+      return transport.queryWithColumns(sql, params, level ? { ...limits, readConcern: { level } } : limits)
+    })
   }
 
   async queryNamed(name: string, args?: Record<string, unknown>): Promise<QueryResponse> {

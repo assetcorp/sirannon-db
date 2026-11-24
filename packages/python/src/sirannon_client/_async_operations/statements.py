@@ -32,7 +32,9 @@ class StatementsOperations(AsyncOperationsBase):
         timeout_ms: int | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> QueryResponse:
-        """Runs one read statement and returns its rows, on a server that accepts SQL.
+        """Runs one read statement and returns its rows, on a server that accepts SQL. With
+        shape set to columns, it returns a QueryColumnsResponse that holds each column and
+        each row as an array, stopping at maxRows and maxBytes.
 
         `POST /db/{id}/query`
 

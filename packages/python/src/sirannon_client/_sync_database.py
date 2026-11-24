@@ -9,13 +9,13 @@ from sirannon_client._database import (
     AsyncLiveQuery,
     AsyncRemoteDatabase,
     AsyncSubscription,
-    LoadPlanner,
 )
 from sirannon_client._events import ChangeEvent, ErrorHandler
 from sirannon_client._live import LiveState, LiveUpdate
+from sirannon_client._load_planner import LoadPlanner
 from sirannon_client._refs import BoundRead, BoundWrite, ReadRef, RowT, WriteRef
 from sirannon_client._sync_runtime import Runtime
-from sirannon_client.models import AckResponse, ExecuteResponse, LoadResponse
+from sirannon_client.models import AckResponse, ExecuteResponse, LoadResponse, QueryColumnsResponse
 
 
 async def _call(work: Callable[[], Any]) -> Any:
@@ -148,6 +148,21 @@ class RemoteDatabase:
     def query(self, statement: Any, params: Any = None, *, read_concern: ConcernArg = None) -> list[Any]:
         """Sends a read and returns its rows, as `AsyncRemoteDatabase.query` does."""
         return self._runtime.run(self._database.query(statement, params, read_concern=read_concern))
+
+    def query_with_columns(
+        self,
+        statement: str,
+        params: Params | None = None,
+        *,
+        read_concern: ConcernArg = None,
+        max_rows: int | None = None,
+        max_bytes: int | None = None,
+    ) -> QueryColumnsResponse:
+        """Sends a read and returns its columns and rows, as `AsyncRemoteDatabase.query_with_columns` does."""
+        work = self._database.query_with_columns(
+            statement, params, read_concern=read_concern, max_rows=max_rows, max_bytes=max_bytes
+        )
+        return self._runtime.run(work)
 
     @overload
     def execute(self, statement: str, params: Params | None = None) -> ExecuteResponse: ...

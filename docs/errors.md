@@ -32,7 +32,9 @@ The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILE
 | - | `DATABASE_OPEN_FAILED` | Sirannon cannot open a database |
 | `ReadOnlyError` | `READ_ONLY` | A caller writes to a read-only database or calls `live` on one |
 | `QueryError` | `QUERY_ERROR` | SQLite fails to prepare or execute a statement |
-| `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table, modifies the `sqlite_` catalogue, uses `ATTACH`, `DETACH`, or `VACUUM INTO`, names the `writable_schema`, `temp_store_directory`, `data_store_directory`, or `wal_checkpoint` pragma, opens, ends, or marks a transaction with `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, or `RELEASE`, or creates or drops a temporary table, view, index, or trigger. Call `checkpoint()` on the database in place of `PRAGMA wal_checkpoint`, and `transaction()` or `executeTransaction()` in place of `BEGIN` and `COMMIT` |
+| - | `INVALID_READ_LIMIT` | A caller passes `queryWithColumns` a `maxRows` or `maxBytes` that is not a whole number from 0 to 2^53-1 |
+| - | `COLUMN_DETAILS_UNSUPPORTED` | A caller calls `queryWithColumns` on a driver whose `columnDetails` capability is `false`, such as node:sqlite before Node.js 24, or on Bun sets `maxRows` or `maxBytes` for a read whose column names repeat |
+| `ForbiddenSqlError` | `FORBIDDEN_SQL` | A statement names a `_sirannon` table bare, in double quotes, backticks, or square brackets, or as a single-quoted string where SQLite reads a table name, such as `FROM '_sirannon_meta'`, modifies the `sqlite_` catalogue, uses `ATTACH`, `DETACH`, or `VACUUM INTO`, names the `writable_schema`, `temp_store_directory`, `data_store_directory`, or `wal_checkpoint` pragma, opens, ends, or marks a transaction with `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, or `RELEASE`, or creates or drops a temporary table, view, index, or trigger. Call `checkpoint()` on the database in place of `PRAGMA wal_checkpoint`, and `transaction()` or `executeTransaction()` in place of `BEGIN` and `COMMIT` |
 | `TransactionError` | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed, such as on a deferred foreign key |
 | - | `TRANSACTION_CLOSED` | A caller uses the `Transaction` handle from a `transaction` callback after that callback returns or throws |
 | - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads, writes, migrates, backs up, or calls `watch` or `live` through the database while a `transaction` callback holds the writer; make the callback's reads and writes through its `Transaction` handle |
@@ -226,14 +228,14 @@ A validation code such as `INVALID_WRITER_WORKER`, `INVALID_MAX_BODY_BYTES`, or 
 
 | Status | Codes |
 | --- | --- |
-| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
+| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `INVALID_READ_LIMIT`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
 | 401 | `IDENTITY_REQUIRED` |
 | 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED`, `ENCRYPTION_CHANGE_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
 | 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS`, `ENCRYPTION_CHANGE_IN_PROGRESS`, `ENCRYPTION_REQUIRED`, `REPLICATION_ACTIVE` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT`, `INVALID_ENCRYPTION_KEY`, `ENCRYPTION_KEY_MISSING`, `ENCRYPTION_KEY_REJECTED`, `DATABASE_NOT_ENCRYPTED`, `ENCRYPTED_PAGE_CORRUPT`, `ENCRYPTION_CHANGE_ABORTED` |
-| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED`, `ENCRYPTION_UNSUPPORTED` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED`, `ENCRYPTION_UNSUPPORTED`, `COLUMN_DETAILS_UNSUPPORTED` |
 | 502 | `BACKUP_DESTINATION_ERROR` |
 | 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED`, `ENCRYPTION_KEY_UNAVAILABLE` |
 

@@ -9,13 +9,15 @@ from typing import Any, Final, TypeVar, cast, overload
 from pydantic import BaseModel, ValidationError
 
 from sirannon_client._channels import Channel, ConcernArg, Params, bind_values, concern, transport_unsupported
+from sirannon_client._columns import column_limits, columns_answer
 from sirannon_client._contracts import CapabilitySource, Streams
 from sirannon_client._errors import closed_error, invalid_argument, invalid_response
 from sirannon_client._events import ChangeEvent, ErrorHandler
 from sirannon_client._http import refuse_sql
 from sirannon_client._live import LiveRows, LiveUpdate
+from sirannon_client._load_planner import LoadPlanner
 from sirannon_client._refs import BoundRead, BoundWrite, ReadRef, RowT, WriteRef, read_call, write_call
-from sirannon_client.models import AckResponse, ExecuteResponse, LoadResponse
+from sirannon_client.models import AckResponse, ExecuteResponse, LoadResponse, QueryColumnsResponse
 
 DEFAULT_LOAD_BATCH_SIZE: Final = 1000
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -44,37 +46,6 @@ def statement_list(statements: Sequence[Mapping[str, Any]]) -> list[dict[str, An
         params = bind_values(statement.get("params"))
         listed.append({"sql": sql} if params is None else {"sql": sql, "params": params})
     return listed
-
-
-class LoadPlanner:
-    def __init__(self, batch_size: int) -> None:
-        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size <= 0:
-            raise invalid_argument("load_all batch_size must be a positive whole number")
-        self._size = batch_size
-        self._held: list[Params] | None = None
-        self._batch: list[Params] = []
-        self._rows_loaded = 0
-        self._changes = 0
-
-    def add(self, row: Params) -> list[Params] | None:
-        self._batch.append(row)
-        if len(self._batch) < self._size:
-            return None
-        ready, self._held, self._batch = self._held, self._batch, []
-        return ready
-
-    def finish(self) -> list[tuple[list[Params], bool]]:
-        if self._batch:
-            pending = [] if self._held is None else [(self._held, False)]
-            return [*pending, (self._batch, True)]
-        return [] if self._held is None else [(self._held, True)]
-
-    def count(self, summary: LoadResponse) -> None:
-        self._rows_loaded += int(summary.rows_loaded)
-        self._changes += int(summary.changes)
-
-    def totals(self) -> LoadResponse:
-        return LoadResponse.model_validate({"rowsLoaded": self._rows_loaded, "changes": self._changes})
 
 
 def discard(work: Awaitable[Any]) -> None:
@@ -244,6 +215,27 @@ class AsyncRemoteDatabase:
             return cast(list[Any], await self._guarded(self._channel.query_named(*operation, level)))
         await self._assert_sql()
         return cast(list[Any], await self._guarded(self._channel.query(_sql(statement), params, level)))
+
+    async def query_with_columns(
+        self,
+        statement: str,
+        params: Params | None = None,
+        *,
+        read_concern: ConcernArg = None,
+        max_rows: int | None = None,
+        max_bytes: int | None = None,
+    ) -> QueryColumnsResponse:
+        """Sends a read and returns each column's name, declared type, and source, with each row as a list.
+
+        Each row holds its values in the order of `columns`, so two columns of the same name each keep their
+        value. The server stops after `max_rows` rows, or before the first row that would take the values past
+        `max_bytes`, and `truncated` names the limit that stopped it, or is None when the answer holds every row.
+        """
+        level = self._read_concern(read_concern)
+        limits = column_limits(max_rows, max_bytes)
+        sql = _sql(statement)
+        await self._assert_sql()
+        return columns_answer(await self._guarded(self._channel.query_columns(sql, params, level, limits)))
 
     @overload
     async def execute(self, statement: str, params: Params | None = None) -> ExecuteResponse: ...

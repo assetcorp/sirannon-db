@@ -98,6 +98,7 @@ type closer interface {
 
 type databaseTransport interface {
 	query(ctx context.Context, call statementCall) ([]Row, error)
+	queryColumns(ctx context.Context, call columnsCall) (QueryColumnsResponse, error)
 	execute(ctx context.Context, call statementCall) ([]ExecuteResult, error)
 	transaction(ctx context.Context, statements []Statement, concern *WriteConcern) ([]ExecuteResult, error)
 	batch(ctx context.Context, sql string, paramsBatch []any, concern *WriteConcern) ([]ExecuteResult, error)

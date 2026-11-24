@@ -13,7 +13,15 @@ import {
 import type { ReplicationEngine } from './engine.js'
 import { isLocalNodeRemoved } from './local-membership.js'
 
-function assertReadyPhase(engine: ReplicationEngine, activity: 'serve reads' | 'accept operations'): void {
+/**
+ * Throws when this node is outside its replication group, or has yet to finish its first sync.
+ *
+ * @param engine - The replication engine of this node.
+ * @param activity - What the node was asked to do, which the error message names.
+ * @throws A `TopologyError` for a node outside the group, and a `SyncError` before the first sync finishes.
+ * @internal
+ */
+export function assertReadyPhase(engine: ReplicationEngine, activity: 'serve reads' | 'accept operations'): void {
   assertGroupMember(engine)
   if (engine.syncState.phase !== 'ready') {
     throw new SyncError(`Node is in '${engine.syncState.phase}' phase and cannot ${activity}`)

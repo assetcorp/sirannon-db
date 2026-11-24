@@ -3,6 +3,7 @@ import type { SirannonSqliteFeature } from './sirannon-sqlite.js'
 
 const AEGIS_CIPHER_NAME = 'aegis'
 const AEGIS_256_ALGORITHM_NAME = 'aegis-256'
+const SQLITE_HEADER = 'SQLite format 3\0'
 
 /**
  * The encryption engine that the `encryption` option needs from Sirannon's SQLite build.
@@ -12,8 +13,10 @@ const AEGIS_256_ALGORITHM_NAME = 'aegis-256'
 export const ENCRYPTION_FEATURE: SirannonSqliteFeature = {
   option: 'encryption',
   code: 'ENCRYPTION_UNSUPPORTED',
-  description: 'encryption engine',
-  presentIn: addon => typeof addon.Database?.prototype?.key === 'function',
+  description: 'encryption engine with file-header reads',
+  presentIn: addon =>
+    typeof addon.Database?.prototype?.key === 'function' &&
+    typeof addon.Database?.prototype?.readFileHeader === 'function',
 }
 
 /**
@@ -39,6 +42,7 @@ export type DatabasePathKind = 'memory' | 'unknown' | 'file'
  * @internal
  */
 export interface EncryptingDatabase {
+  readFileHeader(): Uint8Array | null
   key(rawKey: Uint8Array): unknown
   startChangeCapture(): unknown
   takeCapturedChanges(): Uint8Array
@@ -68,7 +72,7 @@ export function classifyDatabasePath(path: string): DatabasePathKind {
  * Checks whether an open, with or without a key, fits the kind of database at its path.
  *
  * @param path - The path that the driver opens.
- * @param kind - What {@link classifyDatabasePath} or {@link probeDatabaseFile} found at the path.
+ * @param kind - What {@link classifyOpenDatabase} or {@link probeDatabaseFile} found at the path.
  * @param keyed - `true` when the open carries a key.
  * @throws An `EncryptionError` with `ENCRYPTION_UNSUPPORTED` for an in-memory database with a key,
  * `DATABASE_NOT_ENCRYPTED` for a key on a plaintext file, and `ENCRYPTION_KEY_MISSING` for an encrypted file without
@@ -132,47 +136,19 @@ export function probeDatabaseFile(open: () => EncryptingDatabase): DatabaseFileK
 }
 
 /**
- * Reads the schema on a connection that opened without a key, before any other statement, so that an encrypted file
- * fails at the open.
+ * Identifies a file from its header through SQLite's open handle, before a key or a schema read can start recovery.
  *
  * @param db - A connection without a key on which no statement has run.
- * @param path - The path of the database, which the error names.
- * @throws An `EncryptionError` with `ENCRYPTION_KEY_MISSING` when SQLite reads the file as not a database.
+ * @returns Whether the connection has no file, an empty file, a plaintext header, or an encrypted header.
  * @internal
  */
-export function readUnkeyedSchema(db: EncryptingDatabase, path: string): void {
-  try {
-    db.prepare('SELECT count(*) FROM sqlite_schema').get()
-  } catch (err) {
-    if (sqliteCode(err) === 'SQLITE_NOTADB') assertKeyFitsFile(path, 'encrypted', false)
-    throw err
-  }
-}
-
-/**
- * Returns the error for a keyed open that failed, replacing a rejected key with `DATABASE_NOT_ENCRYPTED` when a
- * connection without a key reads the file as a plaintext database.
- *
- * @param path - The path of the database, which the error names.
- * @param err - The error that the keyed open raised.
- * @param probe - Identifies the file through a connection without a key, as {@link probeDatabaseFile} does.
- * @returns The error to raise.
- * @internal
- */
-export function explainRejectedKey(path: string, err: unknown, probe: () => DatabaseFileKind): unknown {
-  if (!(err instanceof EncryptionError) || err.code !== 'ENCRYPTION_KEY_REJECTED') return err
-  let kind: DatabaseFileKind
-  try {
-    kind = probe()
-  } catch {
-    return err
-  }
-  try {
-    assertKeyFitsFile(path, kind, true)
-  } catch (refusal) {
-    return refusal
-  }
-  return err
+export function classifyOpenDatabase(db: EncryptingDatabase): DatabaseFileKind {
+  const header = db.readFileHeader()
+  if (header === null) return 'memory'
+  if (header.length === 0) return 'new'
+  return header.length === SQLITE_HEADER.length && String.fromCharCode(...header) === SQLITE_HEADER
+    ? 'plaintext'
+    : 'encrypted'
 }
 
 function readSchema(db: EncryptingDatabase, path: string): void {

@@ -15,12 +15,11 @@ import { copyDatabaseWithBetterSqlite3 } from './copy.js'
 import {
   assertKeyFitsFile,
   classifyDatabasePath,
+  classifyOpenDatabase,
   ENCRYPTION_FEATURE,
   type EncryptingDatabase,
-  explainRejectedKey,
   keyConnection,
   probeDatabaseFile,
-  readUnkeyedSchema,
 } from './encryption.js'
 import {
   countingStatement,
@@ -222,14 +221,15 @@ async function openDatabase(
   const db = openConnection()
   const encrypting = driverOptions?.encryption === true ? (db as unknown as EncryptingDatabase) : null
   try {
+    if (encrypting && pathKind === 'file')
+      assertKeyFitsFile(path, classifyOpenDatabase(encrypting), rawKey !== undefined)
     if (rawKey !== undefined && encrypting) keyConnection(encrypting, path, rawKey)
     else {
-      if (encrypting && pathKind === 'file') readUnkeyedSchema(encrypting, path)
       db.pragma('temp_store = FILE')
     }
   } catch (err) {
     db.close()
-    throw rawKey !== undefined && pathKind === 'file' ? explainRejectedKey(path, err, probe) : err
+    throw err
   }
   return { db, taker: driverOptions?.rowCounts === true ? new RowCountTaker() : null, encrypting }
 }

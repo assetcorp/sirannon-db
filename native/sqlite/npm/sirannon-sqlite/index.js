@@ -57,6 +57,10 @@ function loadAddon(nativeBinding) {
 
 const Database = createDatabase(loadAddon, true)
 
+Database.prototype.readFileHeader = function readFileHeader() {
+  return this[cppdb].readFileHeader()
+}
+
 Database.prototype.key = function key(rawKey) {
   this[cppdb].key(rawKey)
   return this

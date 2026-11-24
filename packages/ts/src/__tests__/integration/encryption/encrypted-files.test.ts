@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   closeSync,
@@ -202,6 +203,72 @@ describe.skipIf(binding === null)('an encrypted database file on the better-sqli
       code: 'ENCRYPTION_UNSUPPORTED',
     })
     expect(fingerprints(dir)).toEqual(before)
+  })
+
+  it.each([
+    'WAL',
+    'DELETE',
+  ])('leaves a crashed plaintext database and its %s journal untouched when refusing a key', async mode => {
+    const path = join(dir, 'orders.db')
+    const child = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        `
+const { DatabaseSync } = require('node:sqlite')
+const db = new DatabaseSync(process.argv[1])
+db.exec('PRAGMA journal_mode = ' + process.argv[2])
+db.exec('PRAGMA wal_autocheckpoint = 0; PRAGMA cache_size = 1')
+db.exec('CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER, note TEXT)')
+db.exec("WITH RECURSIVE ids(id) AS (VALUES(1) UNION ALL SELECT id + 1 FROM ids WHERE id < 128) INSERT INTO orders SELECT id, 250, hex(zeroblob(512)) FROM ids")
+db.exec('BEGIN IMMEDIATE; UPDATE orders SET total = 400')
+process.kill(process.pid, 'SIGKILL')
+`,
+        path,
+        mode,
+      ],
+      { encoding: 'utf8', timeout: 10_000 },
+    )
+    expect(child.signal, child.stderr).toBe('SIGKILL')
+    expect(existsSync(`${path}${mode === 'WAL' ? '-wal' : '-journal'}`)).toBe(true)
+    const before = fingerprints(dir)
+
+    const sirannon = registry()
+    for (const readOnly of [true, false]) {
+      await expect(sirannon.open('refused', path, { readOnly, ...withKey(key) })).rejects.toMatchObject({
+        code: 'DATABASE_NOT_ENCRYPTED',
+      })
+      expect(fingerprints(dir)).toEqual(before)
+    }
+    const recovered = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        `
+const { DatabaseSync } = require('node:sqlite')
+const db = new DatabaseSync(process.argv[1])
+process.stdout.write(JSON.stringify(db.prepare('SELECT count(*) AS count, min(total) AS minimum, max(total) AS maximum FROM orders').get()))
+db.close()
+`,
+        path,
+      ],
+      { encoding: 'utf8', timeout: 10_000 },
+    )
+    expect(recovered.status, recovered.stderr).toBe(0)
+    expect(JSON.parse(recovered.stdout)).toEqual({ count: 128, minimum: 250, maximum: 250 })
+  })
+
+  it('identifies a truncated plaintext file by its header when refusing a key', async () => {
+    const path = join(dir, 'truncated.db')
+    const header = Buffer.from('SQLite format 3\0')
+    writeFileSync(path, header)
+    const sirannon = registry()
+    for (const readOnly of [true, false]) {
+      await expect(sirannon.open('truncated', path, { readOnly, ...withKey(key) })).rejects.toMatchObject({
+        code: 'DATABASE_NOT_ENCRYPTED',
+      })
+    }
+    expect(readFileSync(path)).toEqual(header)
   })
 
   it.each([

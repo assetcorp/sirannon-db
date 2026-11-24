@@ -61,6 +61,13 @@ describe.skipIf(binding === null || process.platform === 'win32')(
       const second = await sirannon.open('orders-again', path, options)
       expect(exclusiveLockFromAnotherProcess(path)).toBe('refused')
 
+      const encrypted = 'encryption' in options
+      const rejected = encrypted ? {} : keyed
+      await expect(sirannon.open('refused', path, rejected)).rejects.toMatchObject({
+        code: encrypted ? 'ENCRYPTION_KEY_MISSING' : 'DATABASE_NOT_ENCRYPTED',
+      })
+      expect(exclusiveLockFromAnotherProcess(path)).toBe('refused')
+
       await second.execute('INSERT INTO orders (id, total) VALUES (2, 400)')
       expect(await first.query('SELECT id, total FROM orders ORDER BY id')).toEqual([
         { id: 1, total: 250 },

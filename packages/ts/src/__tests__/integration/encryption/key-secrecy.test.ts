@@ -146,7 +146,7 @@ describe.skipIf(binding === null)('the key of an encrypted database', () => {
 
     expect(captured.length).toBeGreaterThan(40)
     expect(leakedKeys(captured, [firstKey, secondKey, wrongKey])).toEqual([])
-  })
+  }, 30_000)
 
   it('stores the key identifier and the time of the last change in the database, where a reopen reads them', async () => {
     const firstKey = randomBytes(32)

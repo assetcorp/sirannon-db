@@ -260,7 +260,7 @@ export async function appendChainHead(
   }
 
   throw destinationError(
-    `Another chain took every one of the ${HEAD_APPEND_ATTEMPTS} places Sirannon tried for chain '${head.chainId}' in '${chainName}'. Point one replication group at this chain name, and give any other group a chainName of its own.`,
+    `Another chain took every one of the ${HEAD_APPEND_ATTEMPTS} places Sirannon tried for chain '${head.chainId}' in '${chainName}'. Point one replication group at this chain name, and give every other group a different chainName.`,
   )
 }
 

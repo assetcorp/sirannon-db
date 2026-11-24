@@ -181,7 +181,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
           if (typeof db.loadExtension !== 'function' || typeof db.enableLoadExtension !== 'function') {
             throw new ExtensionError(
               extensionPath,
-              `Node's own SQLite module on ${process.version} carries no extension loading call`,
+              `Node's built-in SQLite module on ${process.version} carries no extension loading call`,
             )
           }
           await loadThroughRuntime(extensionPath, () => {

@@ -60,7 +60,7 @@ export async function loadExtension(
   if (driver.capabilities.extensions && !driver.resolveExtensionPath) {
     throw new ExtensionError(
       extensionPath,
-      'The current driver declares extension support but resolves no absolute path, which would let the dynamic linker search its own paths',
+      'The current driver declares extension support but resolves no absolute path, which would let the dynamic linker search the system library paths',
     )
   }
 
@@ -69,7 +69,7 @@ export async function loadExtension(
   if (driver.resolveExtensionPath && !isAbsolutePath(resolved)) {
     throw new ExtensionError(
       extensionPath,
-      'The current driver resolved the extension to a relative path, which would let the dynamic linker search its own paths',
+      'The current driver resolved the extension to a relative path, which would let the dynamic linker search the system library paths',
     )
   }
 

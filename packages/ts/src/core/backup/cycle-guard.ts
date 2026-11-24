@@ -229,7 +229,7 @@ export function unclaimableChainList(
   return new SirannonError(
     `The backups of database '${request.databaseId}' belong to a replication group, and this destination offers no writePieceIfAbsent. ` +
       `Two nodes starting a chain at the same moment would each replace the record listing the other's in '${chainName}'. ` +
-      'Give the destination that function, or give each node a chainName of its own.',
+      'Give the destination that function, or give each node a different chainName.',
     'BACKUP_DESTINATION_ERROR',
   )
 }

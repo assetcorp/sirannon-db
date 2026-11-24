@@ -43,7 +43,7 @@ jobs:
         run: node .github/scripts/ci-scope.js --release-only
 
   ci:
-    name: Node ${{ matrix.node-version }}
+    name: Node ${{ matrix.node-major }}
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' && (!inputs.suites || contains(format(',{0},', inputs.suites), ',ci-node,')) }}
     runs-on: ubuntu-latest
@@ -52,9 +52,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - node-version: 22
+          - node-major: 22
+            node-version: 22.20.0
             python-version: '3.11'
-          - node-version: 24
+          - node-major: 24
+            node-version: 24
             python-version: '3.14'
 
     steps:
@@ -184,7 +186,7 @@ jobs:
         run: python3 -m pytest -q
 
   e2e:
-    name: Replication E2E (Node ${{ matrix.node-version }})
+    name: Replication E2E (Node ${{ matrix.node-major }})
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.release_only != 'true' && (!inputs.suites || contains(format(',{0},', inputs.suites), ',ci-e2e,')) }}
     runs-on: ubuntu-latest
@@ -192,7 +194,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-major: 22
+            node-version: 22.20.0
+          - node-major: 24
+            node-version: 24
 
     steps:
       - name: Checkout

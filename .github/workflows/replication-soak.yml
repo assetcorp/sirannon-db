@@ -19,13 +19,17 @@ concurrency:
 
 jobs:
   soak:
-    name: Soak (Node ${{ matrix.node-version }})
+    name: Soak (Node ${{ matrix.node-major }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        node-version: [22, 24]
+        include:
+          - node-major: 22
+            node-version: 22.20.0
+          - node-major: 24
+            node-version: 24
 
     steps:
       - name: Checkout

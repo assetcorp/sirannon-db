@@ -53,7 +53,7 @@ Each entry of `columns` has five fields: `name`, `declaredType`, `table`, `colum
 | Driver | Fields that it reports |
 | --- | --- |
 | better-sqlite3 | All five |
-| node:sqlite | All five on Node.js 22.16 and later. On an earlier Node.js release, the driver's `columnDetails` capability is `false`, so `queryWithColumns` fails with `COLUMN_DETAILS_UNSUPPORTED` |
+| node:sqlite | All five |
 | Bun | `name` and `declaredType` |
 | wa-sqlite and Expo | `name` |
 

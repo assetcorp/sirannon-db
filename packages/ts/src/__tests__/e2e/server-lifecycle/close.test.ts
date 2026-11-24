@@ -3,6 +3,7 @@ import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { SirannonClient } from '../../../client/index.js'
 import { SirannonError } from '../../../core/errors.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import type { Params, QueryOptions, ServerExecutionTarget, ServerOptions } from '../../../core/types.js'
@@ -27,6 +28,8 @@ const CLOSE_TIMEOUT_MS = 250
 const TIMER_SLACK_MS = 25
 const LARGEST_TIMER_DELAY_MS = 2_147_483_647
 const SELECT_ALL_MINUTES = 'SELECT id, body FROM minutes ORDER BY id'
+const LARGE_ANSWER_ROWS = 20_000
+const LARGE_ANSWER_BODY_CHARS = 500
 
 interface Served {
   sirannon: Sirannon
@@ -51,6 +54,7 @@ interface RawConnection {
 let dir: string
 const running: Served[] = []
 const rawClients: RawDeviceClient[] = []
+const httpSockets: net.Socket[] = []
 
 async function serve(
   rows: number,
@@ -133,6 +137,8 @@ function postRequest(body: string, declaredLength = Buffer.byteLength(body)): st
 
 async function connect(port: number): Promise<RawConnection> {
   const socket = net.connect(port, '127.0.0.1')
+  httpSockets.push(socket)
+  socket.setEncoding('utf8')
   let text = ''
   let closed = false
   socket.on('data', chunk => {
@@ -200,11 +206,42 @@ function heldAuthentication(): { options: ServerOptions; entered: () => boolean;
   }
 }
 
+function heldStatement(heldSql: string): HeldReads {
+  let entered = 0
+  let release: () => void = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  return {
+    options: sirannon => ({
+      resolveExecutionTarget: async id => {
+        const db = await sirannon.resolve(id)
+        if (!db) return undefined
+        const target: ServerExecutionTarget = {
+          query: async <T>(sql: string, params?: Params, queryOptions?: QueryOptions): Promise<T[]> => {
+            if (sql === heldSql) {
+              entered++
+              await gate
+            }
+            return db.query<T>(sql, params, queryOptions)
+          },
+          execute: (sql, params, executeOptions) => db.execute(sql, params, executeOptions),
+          transaction: fn => db.transaction(fn),
+        }
+        return target
+      },
+    }),
+    entered: () => entered,
+    release: () => release(),
+  }
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'sirannon-server-close-'))
 })
 
 afterEach(async () => {
+  for (const socket of httpSockets.splice(0)) socket.destroy()
   for (const client of rawClients.splice(0)) client.destroy()
   for (const served of running.splice(0).reverse()) {
     await served.server.close().catch(() => {})
@@ -437,5 +474,166 @@ describe('closing a server', () => {
       body: COUNT_ROWS,
     })
     expect(await answered.json()).toEqual({ rows: [{ n: 1 }] })
+  })
+})
+
+describe.each(['http', 'websocket'] as const)('closing a server under the published client over %s', transport => {
+  it('lets a read that an execution target holds finish inside the close timeout and returns its full answer, however large', async () => {
+    const held = heldStatement(SELECT_ALL_MINUTES)
+    const served = await serve(0, 0, held.options)
+    const database = await served.sirannon.resolve(DATABASE_ID)
+    await database?.execute(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${LARGE_ANSWER_ROWS})
+       INSERT INTO minutes (body) SELECT printf('%0${LARGE_ANSWER_BODY_CHARS}d', i) FROM n`,
+    )
+    const client = new SirannonClient(`http://127.0.0.1:${served.port}`, { transport, autoReconnect: false })
+    try {
+      const db = client.database(DATABASE_ID)
+      expect(await db.query(COUNT_SQL)).toEqual([{ n: LARGE_ANSWER_ROWS }])
+      const reading = db.query(SELECT_ALL_MINUTES).then(
+        rows => ({ ok: true as const, rows }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      await waitFor(() => held.entered() === 1, 'the read reaching the execution target')
+
+      const closing = served.server.close({ timeoutMs: SOCKET_DEADLINE_MS })
+      held.release()
+      const outcome = await within(reading, 'the held read')
+      await within(closing, 'close after the held read')
+
+      const stored = readSqlite<{ id: bigint | number; body: string }>(served.path, SELECT_ALL_MINUTES)
+      expect(outcome).toEqual({ ok: true, rows: stored.map(row => ({ id: Number(row.id), body: row.body })) })
+    } finally {
+      client.close()
+    }
+  })
+})
+
+describe('closing while HTTP answers are backpressured', () => {
+  it('finishes an authentication refusal while the refused request body is incomplete', async () => {
+    const message = 'é'.repeat(5_000_000)
+    const served = await serve(0, 0, {
+      authenticate: () => {
+        throw Object.assign(new Error(message), { status: 403, code: 'ACCESS_DENIED' })
+      },
+    })
+    const reader = await connect(served.port)
+    reader.socket.once('data', () => reader.socket.pause())
+    reader.socket.write(postRequest('{', DECLARED_BODY_BYTES))
+    await waitFor(() => reader.received().includes('\r\n\r\n'), 'the refusal starting')
+
+    let closed = false
+    const closing = served.server.close({ timeoutMs: SOCKET_DEADLINE_MS }).then(() => {
+      closed = true
+    })
+    await pause(READER_PAUSED_WHILE_CLOSING_MS)
+    expect(closed).toBe(false)
+    reader.socket.resume()
+    await within(closing, 'close after sending the refusal')
+    await within(reader.closed, 'the refused connection closing')
+
+    expect(reader.received()).toMatch(/^HTTP\/1\.1 403/)
+    expect(JSON.parse(reader.received().split('\r\n\r\n')[1] ?? '')).toEqual({
+      error: { code: 'ACCESS_DENIED', message },
+    })
+  })
+
+  it('finishes concurrent answers after one reader disconnects and the others resume', async () => {
+    const held = heldStatement(SELECT_ALL_MINUTES)
+    const served = await serve(0, 0, held.options)
+    const db = served.sirannon.get(DATABASE_ID)
+    await db?.execute(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${LARGE_ANSWER_ROWS})
+       INSERT INTO minutes (body) SELECT printf('%0${LARGE_ANSWER_BODY_CHARS}d', i) FROM n`,
+    )
+    const readers = await Promise.all(Array.from({ length: 8 }, () => connect(served.port)))
+    for (const reader of readers) {
+      reader.socket.once('data', () => reader.socket.pause())
+      reader.socket.write(postRequest(JSON.stringify({ sql: SELECT_ALL_MINUTES })))
+    }
+    await waitFor(() => held.entered() === readers.length, 'every read reaching the execution target')
+    let closed = false
+    const closing = served.server.close({ timeoutMs: SOCKET_DEADLINE_MS }).then(() => {
+      closed = true
+    })
+    held.release()
+    await waitFor(() => readers.every(reader => reader.received().length > 0), 'every answer starting')
+    const [disconnected, ...remaining] = readers
+    disconnected?.socket.destroy()
+    await pause(READER_PAUSED_WHILE_CLOSING_MS)
+    expect(closed).toBe(false)
+    for (const reader of remaining) reader.socket.resume()
+    await within(closing, 'close after concurrent answers')
+    await within(Promise.all(readers.map(reader => reader.closed)), 'every reader closing')
+
+    const expected = readSqlite<{ id: bigint | number; body: string }>(served.path, SELECT_ALL_MINUTES).map(row => ({
+      id: Number(row.id),
+      body: row.body,
+    }))
+    for (const reader of remaining) {
+      expect(JSON.parse(reader.received().split('\r\n\r\n')[1] ?? '')).toEqual({ rows: expected })
+    }
+    const replacement = await serve(1, served.port)
+    const client = new SirannonClient(`http://127.0.0.1:${replacement.port}`, { transport: 'http' })
+    try {
+      expect(await client.database(DATABASE_ID).query(COUNT_SQL)).toEqual([{ n: 1 }])
+    } finally {
+      client.close()
+    }
+  })
+
+  it.each([
+    'resume',
+    'disconnect',
+  ] as const)('ends a stalled answer at the deadline before the client can %s', async action => {
+    const served = await serve(0)
+    const reader = await connect(served.port)
+    reader.socket.once('data', () => reader.socket.pause())
+    reader.socket.write(postRequest(JSON.stringify({ sql: 'SELECT hex(zeroblob(5000000)) AS body' })))
+    await waitFor(() => reader.received().length > 0, 'the large answer starting')
+
+    const started = performance.now()
+    await within(served.server.close({ timeoutMs: CLOSE_TIMEOUT_MS }), 'close with a stalled reader')
+    expect(performance.now() - started).toBeGreaterThanOrEqual(CLOSE_TIMEOUT_MS - TIMER_SLACK_MS)
+    const replacement = await serve(1, served.port)
+    expect((await fetch(`http://127.0.0.1:${replacement.port}/health`)).status).toBe(200)
+    if (action === 'resume') reader.socket.resume()
+    else reader.socket.destroy()
+    await within(reader.closed, 'the stalled reader closing')
+    expect(Buffer.byteLength(reader.received())).toBeLessThan(10_000_000)
+  })
+
+  it.each([
+    'resume',
+    'disconnect',
+  ] as const)('settles a backpressured readiness answer when its reader chooses to %s', async action => {
+    const currentPrimary = 'primary'.repeat(1_500_000)
+    const served = await serve(0, 0, {
+      getReplicationStatus: () => ({
+        role: 'replica',
+        writeForwarding: false,
+        peers: 1,
+        localSeq: 0n,
+        currentPrimary,
+        health: { state: 'healthy', reason: 'in-sync', canRead: true, canWrite: false },
+      }),
+    })
+    const reader = await connect(served.port)
+    reader.socket.once('data', () => reader.socket.pause())
+    reader.socket.write('GET /health/ready HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n')
+    await waitFor(() => reader.received().length > 0, 'the readiness answer starting')
+    let closed = false
+    const closing = served.server.close({ timeoutMs: SOCKET_DEADLINE_MS }).then(() => {
+      closed = true
+    })
+    await pause(READER_PAUSED_WHILE_CLOSING_MS)
+    expect(closed).toBe(false)
+    if (action === 'resume') reader.socket.resume()
+    else reader.socket.destroy()
+    await within(closing, 'close after the readiness answer')
+    await within(reader.closed, 'the readiness reader closing')
+    if (action === 'resume') {
+      expect(JSON.parse(reader.received().split('\r\n\r\n')[1] ?? '').replication.currentPrimary).toBe(currentPrimary)
+    }
   })
 })

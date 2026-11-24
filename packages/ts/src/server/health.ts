@@ -1,7 +1,7 @@
 import type { HttpRequest, HttpResponse } from 'uWebSockets.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { NodeHealthReason, ReplicationStatusInfo } from '../core/types.js'
-import { endResponse } from './connection-drain.js'
+import { endResponseWithBody } from './connection-drain.js'
 
 /**
  * The body of `GET /health`, which the server sends while its process is up.
@@ -94,9 +94,7 @@ export function handleLiveness(): (res: HttpResponse, req: HttpRequest) => void 
   const payload = JSON.stringify({ status: 'ok' } satisfies LivenessResponse)
 
   return res => {
-    endResponse(res, () => {
-      res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json').end(payload)
-    })
+    endResponseWithBody(res, () => writeJsonHead(res), payload)
   }
 }
 
@@ -149,10 +147,12 @@ export function handleReadiness(
     }
 
     const payload = JSON.stringify(body)
-    endResponse(res, () => {
-      res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json').end(payload)
-    })
+    endResponseWithBody(res, () => writeJsonHead(res), payload)
   }
+}
+
+function writeJsonHead(res: HttpResponse): void {
+  res.writeStatus('200 OK').writeHeader('Content-Type', 'application/json')
 }
 
 function readinessStatusForReplication(

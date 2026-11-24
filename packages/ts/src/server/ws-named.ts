@@ -12,6 +12,9 @@ export interface WSNamedContext extends WSOperationContext {
   operations: OperationSource
 }
 
+const COLUMN_FIELDS_NEED_SQL =
+  '"shape", "maxRows", and "maxBytes" apply only to a "query" message that carries "sql", not one that carries "name"'
+
 export type ArgumentsRead = { ok: true; value: OperationArguments } | { ok: false; message: string }
 
 export function readArguments(raw: unknown): ArgumentsRead {
@@ -30,6 +33,11 @@ export async function handleNamedQueryMessage(
   id: string,
   name: string,
 ): Promise<void> {
+  if (msg.shape !== undefined || msg.maxRows !== undefined || msg.maxBytes !== undefined) {
+    ctx.sendError(id, 'INVALID_MESSAGE', COLUMN_FIELDS_NEED_SQL)
+    return
+  }
+
   const args = readArguments(msg.args)
   if (!args.ok) {
     ctx.sendError(id, 'INVALID_MESSAGE', args.message)

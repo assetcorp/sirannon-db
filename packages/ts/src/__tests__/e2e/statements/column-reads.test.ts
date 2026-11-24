@@ -151,6 +151,41 @@ describe('POST /db/:id/query and the WebSocket query with shape set to columns',
   })
 })
 
+describe('a WebSocket query message that names a registered read', () => {
+  it('refuses shape, maxRows, and maxBytes with INVALID_MESSAGE, and answers the same read without them', async () => {
+    const sirannon = trackedRegistry()
+    const db = await sirannon.open('ledger', join(scratchDirectory('column-reads-named'), 'ledger.db'))
+    await db.execute('CREATE TABLE ledger (id INTEGER PRIMARY KEY)')
+    await db.execute('INSERT INTO ledger (id) VALUES (1), (2)')
+    const named = await serveRegistry(sirannon, {
+      operations: {
+        ledger: { reads: { everyEntry: { statement: () => ({ sql: 'SELECT id FROM ledger ORDER BY id' }) } } },
+      },
+    })
+    const socket = await RawSocket.open(`${named.wsBase}/db/ledger`)
+
+    const refused: Record<string, unknown>[] = [
+      { shape: 'columns' },
+      { shape: 'rows' },
+      { maxRows: 1 },
+      { maxBytes: 1 },
+      { shape: 'columns', maxRows: 1, maxBytes: 64 },
+      { shape: null },
+    ]
+    for (const [index, fields] of refused.entries()) {
+      const reply = (await socket.request({
+        id: `named-${index}`,
+        type: 'query',
+        name: 'everyEntry',
+        ...fields,
+      })) as ServerReply
+      expect([reply.type, reply.error?.code], JSON.stringify(fields)).toEqual(['error', 'INVALID_MESSAGE'])
+    }
+    const plain = (await socket.request({ id: 'named-plain', type: 'query', name: 'everyEntry' })) as ServerReply
+    expect(plain).toMatchObject({ type: 'result', data: { rows: [{ id: 1 }, { id: 2 }] } })
+  })
+})
+
 describe.each(['http', 'websocket'] as const)('RemoteDatabase.queryWithColumns over %s', transport => {
   it('decodes tagged values in column order, stops at its limits, and refuses bad limits before sending them', async () => {
     const client = new SirannonClient(served.base, { transport, autoReconnect: false })

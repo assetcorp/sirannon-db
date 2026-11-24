@@ -42,6 +42,26 @@ export function nodeReportsColumnDetails(): boolean {
   }
 }
 
+let staleArrayWidths: boolean | undefined
+
+function arrayReadsKeepStaleWidths(): boolean {
+  if (staleArrayWidths !== undefined) return staleArrayWidths
+  const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite')
+  const probe = new DatabaseSync(':memory:')
+  try {
+    probe.exec('CREATE TABLE widths (a INTEGER); INSERT INTO widths VALUES (1)')
+    const stmt = probe.prepare('SELECT * FROM widths') as unknown as StatementWithColumns
+    stmt.setReturnArrays(true)
+    stmt.all()
+    probe.exec('ALTER TABLE widths ADD COLUMN b INTEGER')
+    const [row] = stmt.all() as unknown[][]
+    staleArrayWidths = row?.length !== 2
+  } finally {
+    probe.close()
+  }
+  return staleArrayWidths
+}
+
 function columnDetailsOf(stmt: StatementWithColumns): ColumnDetail[] {
   return stmt.columns().map(column => ({
     name: column.name,
@@ -54,9 +74,9 @@ function columnDetailsOf(stmt: StatementWithColumns): ColumnDetail[] {
 
 /**
  * Executes a statement and returns its column details with each row as an array, stepping one row at a time while
- * the read carries a limit and reading every row in one call while it carries none. When that one call returns rows
- * narrower than the statement's columns, as node:sqlite in Node.js 22 does after a schema change, it reads the rows
- * again one at a time, so that every row holds one value for each column.
+ * the read carries a limit and reading every row in one call while it carries none. On a runtime whose one call keeps
+ * returning rows at a statement's old width after a schema change, as node:sqlite in Node.js 22 does, a read without
+ * limits steps one row at a time too, so that every row holds one value for each column and the statement runs once.
  *
  * @param statement - The node:sqlite statement, which reads integers as `bigint`.
  * @param limits - The row and byte limits of the read.
@@ -74,13 +94,10 @@ export function readWithColumns(
   stmt.setReturnArrays(true)
   try {
     if (!limitsRows(limits)) {
-      const rows = stmt.all(...bound) as unknown[][]
-      const columns = columnDetailsOf(stmt)
-      if (rows.length === 0 || rows[0].length === columns.length) {
-        return { columns, rows: unlimitedRows(rows, limits), truncated: null }
-      }
-      const stepped = unlimitedRows([...(stmt.iterate(...bound) as IterableIterator<unknown[]>)], limits)
-      return { columns: columnDetailsOf(stmt), rows: stepped, truncated: null }
+      const read = arrayReadsKeepStaleWidths()
+        ? [...(stmt.iterate(...bound) as IterableIterator<unknown[]>)]
+        : (stmt.all(...bound) as unknown[][])
+      return { columns: columnDetailsOf(stmt), rows: unlimitedRows(read, limits), truncated: null }
     }
     const collector = new RowCollector(limits)
     for (const row of stmt.iterate(...bound) as IterableIterator<unknown[]>) {

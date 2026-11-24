@@ -301,7 +301,8 @@ async function subscribeResuming(
   try {
     ctx = await deps.cdc.ensure(state.databaseId, state.database)
     await state.database.watch(table)
-    const logEnd = await selectMaxAssignedChangeSeq(ctx.cdcConn, ctx.tracker.changeLogTable)
+    const tracker = ctx.tracker
+    const logEnd = await ctx.read(conn => selectMaxAssignedChangeSeq(conn, tracker.changeLogTable))
 
     const grouper = new TransactionGrouper(event => deps.sendChange(conn, id, event) !== 'dropped')
     const deliver = (event: ChangeEvent): WSSendOutcome => (grouper.receive(event) ? 'sent' : 'dropped')
@@ -335,7 +336,7 @@ async function subscribeResuming(
       return
     }
 
-    const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
+    const minSeq = await ctx.read(conn => tracker.getMinSeq(conn))
     resync = cursorOutsideLog || needsResync(sinceSeq, minSeq, boundary)
     deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, resync)
   } catch (err) {
@@ -347,7 +348,8 @@ async function subscribeResuming(
 
   if (!resync) {
     try {
-      await primed.replay(ctx.tracker, ctx.cdcConn, table, filter, boundary)
+      const tracker = ctx.tracker
+      await ctx.read(conn => primed.replay(tracker, conn, table, filter, boundary))
     } catch {
       deps.sendSubscribed(conn, id, boundary.toString(), ctx.epoch, true)
     }

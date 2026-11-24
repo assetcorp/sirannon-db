@@ -44,16 +44,17 @@ export async function subscribeDevice(
     for (const table of tables) {
       await state.database.watch(table)
     }
-    const holdsCursor = await deviceCursorExists(ctx.cdcConn, deviceId)
+    const tracker = ctx.tracker
+    const holdsCursor = await ctx.read(conn => deviceCursorExists(conn, deviceId))
     epoch = ctx.epoch
     const logEnd =
-      sinceSeq === undefined ? 0n : await selectMaxAssignedChangeSeq(ctx.cdcConn, ctx.tracker.changeLogTable)
-    boundary = ctx.tracker.cursor
+      sinceSeq === undefined ? 0n : await ctx.read(conn => selectMaxAssignedChangeSeq(conn, tracker.changeLogTable))
+    boundary = tracker.cursor
 
     if (sinceSeq === undefined) {
       resync = false
     } else {
-      const minSeq = await ctx.tracker.getMinSeq(ctx.cdcConn)
+      const minSeq = await ctx.read(conn => tracker.getMinSeq(conn))
       const foreignEpoch = clientEpoch !== undefined && clientEpoch !== ctx.epoch
       resync = foreignEpoch || sinceSeq > logEnd || needsResync(sinceSeq, minSeq, boundary)
     }
@@ -74,6 +75,7 @@ export async function subscribeDevice(
         socketBuffered: () => conn.bufferedAmount(),
         socketCongested: () => conn.bufferedAmount() >= deps.socketResumeBytes,
         flushSocket: () => conn.flush(),
+        socketCheckIntervalMs: ctx.pollIntervalMs,
         onOverload: () => deps.handleOverload(conn),
         onFault: err => {
           if (err instanceof DroppedDeviceCursor) {
@@ -82,13 +84,14 @@ export async function subscribeDevice(
           }
           deps.closeFaulted(conn)
         },
-        readLog: async (afterSeq, upToSeq, limit) => {
-          const events = await ctx.tracker.readSinceTables(ctx.cdcConn, tables, afterSeq, upToSeq, limit)
-          if (stream.holdsCursor && !(await deviceCursorExists(ctx.cdcConn, deviceId))) {
-            throw new DroppedDeviceCursor()
-          }
-          return events
-        },
+        readLog: (afterSeq, upToSeq, limit) =>
+          ctx.read(async conn => {
+            const events = await tracker.readSinceTables(conn, tables, afterSeq, upToSeq, limit)
+            if (stream.holdsCursor && !(await deviceCursorExists(conn, deviceId))) {
+              throw new DroppedDeviceCursor()
+            }
+            return events
+          }),
         logCursor: () => ctx.tracker.cursor,
         logCursorAtTxBoundary: () => ctx.tracker.pollEndedAtTxBoundary,
         transform: event => {

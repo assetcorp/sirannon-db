@@ -1,5 +1,16 @@
 import type { ChangeEvent } from '../types.js'
 
+const transactionEndCopies = new WeakMap<ChangeEvent, ChangeEvent>()
+
+function transactionEndOf(event: ChangeEvent): ChangeEvent {
+  let copy = transactionEndCopies.get(event)
+  if (copy === undefined) {
+    copy = { ...event, txEnd: true }
+    transactionEndCopies.set(event, copy)
+  }
+  return copy
+}
+
 export class TransactionGrouper {
   private pending: ChangeEvent | undefined
   private stopped = false
@@ -32,7 +43,7 @@ export class TransactionGrouper {
   }
 
   private emit(event: ChangeEvent, txEnd: boolean): boolean {
-    const outgoing = txEnd && event.txEnd !== true ? { ...event, txEnd: true } : event
+    const outgoing = txEnd && event.txEnd !== true ? transactionEndOf(event) : event
     if (this.deliver(outgoing)) return true
     this.stopped = true
     this.pending = undefined

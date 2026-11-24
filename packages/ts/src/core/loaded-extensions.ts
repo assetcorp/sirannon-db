@@ -61,11 +61,36 @@ export class LoadedExtensions {
     }
   }
 
-  /** Loads an extension into the pool's connections and every tracked connection, then records its resolved path. */
-  load(poolConnections: readonly SQLiteConnection[], extensionPath: string): Promise<void> {
+  /**
+   * Loads an extension into the pool's connections and every tracked connection, then records its resolved path.
+   *
+   * @param poolConnections - Returns the pool's open connections, which this method reads in its turn, so that a
+   * reader that {@link LoadedExtensions.admit} adds before the load is one of the connections that the load covers.
+   * @param extensionPath - The extension to load.
+   */
+  load(poolConnections: () => readonly SQLiteConnection[], extensionPath: string): Promise<void> {
     return this.runInTurn(async () => {
-      const resolved = await loadExtension(this.driver, [...poolConnections, ...this.openedConnections], extensionPath)
+      const resolved = await loadExtension(
+        this.driver,
+        [...poolConnections(), ...this.openedConnections],
+        extensionPath,
+      )
       if (!this.resolvedPaths.includes(resolved)) this.resolvedPaths.push(resolved)
+    })
+  }
+
+  /**
+   * Loads every recorded extension into a connection that the pool opened after its other connections, then adds it
+   * to the pool in the same turn, so that the connection either loads an extension as it joins or joins before the
+   * load that covers it.
+   *
+   * @param connection - The new pool connection.
+   * @param add - Adds the connection to the pool.
+   */
+  admit(connection: SQLiteConnection, add: () => void): Promise<void> {
+    return this.runInTurn(async () => {
+      await this.loadRecorded(connection)
+      add()
     })
   }
 

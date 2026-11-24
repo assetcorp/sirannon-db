@@ -47,40 +47,74 @@ export function wireChangeEvent(event: ChangeEvent): WSWireChangeEvent {
   }
 }
 
+/**
+ * One change event in its wire form, as JSON text, with that text's length in UTF-8 bytes.
+ *
+ * @internal
+ */
+export interface EncodedChangeEvent {
+  json: string
+  bytes: number
+}
+
+const encodedChangeEvents = new WeakMap<ChangeEvent, EncodedChangeEvent>()
+
+/**
+ * Returns the wire JSON of a change event, which the server computes once per event object and shares with every
+ * subscription that receives that object, so that fanning one change out to many devices encodes it once.
+ *
+ * @param event - The event, which no caller may change once it has been encoded.
+ * @returns The JSON text and its length in UTF-8 bytes.
+ * @throws The error from `JSON.stringify` when the event holds a value that cannot be serialised.
+ * @internal
+ */
+export function encodedChangeEvent(event: ChangeEvent): EncodedChangeEvent {
+  let encoded = encodedChangeEvents.get(event)
+  if (encoded === undefined) {
+    const json = JSON.stringify(wireChangeEvent(event))
+    encoded = { json, bytes: Buffer.byteLength(json) }
+    encodedChangeEvents.set(event, encoded)
+  }
+  return encoded
+}
+
 /** The outcome of adding an event to the packer, which is the send outcome when the packer sends a frame, or `queued` when it keeps the event for a later frame. */
 export type FrameAppendOutcome = WSSendOutcome | 'queued'
 
 /**
  * Packs change events into `changes` frames up to a size target. The packer
- * serialises each event once, builds the frame from those strings, and
- * measures the frame in UTF-8 bytes, which is what the socket buffers.
+ * takes each event's JSON from {@link encodedChangeEvent}, builds the frame from
+ * those strings, and measures the frame in UTF-8 bytes, which is what the socket buffers.
  */
 export class DeviceFramePacker {
   private parts: string[] = []
   private bytes = 0
+  private readonly frameStart: string
 
   constructor(
-    private readonly subscriptionId: string,
+    subscriptionId: string,
     private readonly sendText: (data: string) => WSSendOutcome,
     private readonly targetBytes: number = DEVICE_FRAME_TARGET_BYTES,
-  ) {}
+  ) {
+    this.frameStart = `{"type":"changes","id":${JSON.stringify(subscriptionId)},"events":[`
+  }
 
   append(event: ChangeEvent): FrameAppendOutcome {
-    let encoded: string
+    let encoded: EncodedChangeEvent
     try {
-      encoded = JSON.stringify(wireChangeEvent(event))
+      encoded = encodedChangeEvent(event)
     } catch {
       return 'dropped'
     }
 
-    const encodedBytes = Buffer.byteLength(encoded)
+    const encodedBytes = encoded.bytes
     let outcome: FrameAppendOutcome = 'queued'
     if (this.parts.length > 0 && this.bytes + encodedBytes > this.targetBytes) {
       outcome = this.flush()
       if (outcome === 'dropped') return outcome
     }
 
-    this.parts.push(encoded)
+    this.parts.push(encoded.json)
     this.bytes += encodedBytes
 
     if (this.bytes >= this.targetBytes) {
@@ -91,7 +125,7 @@ export class DeviceFramePacker {
 
   flush(): FrameAppendOutcome {
     if (this.parts.length === 0) return 'queued'
-    const frame = `{"type":"changes","id":${JSON.stringify(this.subscriptionId)},"events":[${this.parts.join(',')}]}`
+    const frame = `${this.frameStart}${this.parts.join(',')}]}`
     this.parts = []
     this.bytes = 0
     return this.sendText(frame)

@@ -59,6 +59,21 @@ export async function upsertDeviceCursor(
   ackedSeq: bigint,
   updatedAt: number,
 ): Promise<void> {
+  const upsert = await prepareUpsertDeviceCursor(conn)
+  await upsert(deviceId, ackedSeq, updatedAt)
+}
+
+/**
+ * Prepares the statement of {@link upsertDeviceCursor} once, for a loop that stores many acknowledgements in one
+ * transaction.
+ *
+ * @param conn - The writer connection.
+ * @returns A function that records one acknowledgement as {@link upsertDeviceCursor} does.
+ * @internal
+ */
+export async function prepareUpsertDeviceCursor(
+  conn: SQLiteConnection,
+): Promise<(deviceId: string, ackedSeq: bigint, updatedAt: number) => Promise<void>> {
   const stmt = await conn.prepare(
     `INSERT INTO "${DEVICE_CURSORS_TABLE}" (device_id, acked_seq, updated_at)
      VALUES (?, ?, ?)
@@ -66,7 +81,9 @@ export async function upsertDeviceCursor(
        acked_seq = max("${DEVICE_CURSORS_TABLE}".acked_seq, excluded.acked_seq),
        updated_at = excluded.updated_at`,
   )
-  await stmt.run(deviceId, ackedSeq.toString(), updatedAt)
+  return async (deviceId, ackedSeq, updatedAt) => {
+    await stmt.run(deviceId, ackedSeq.toString(), updatedAt)
+  }
 }
 
 /**
@@ -86,13 +103,31 @@ export async function updateDeviceCursor(
   ackedSeq: bigint,
   updatedAt: number,
 ): Promise<number> {
+  const update = await prepareUpdateDeviceCursor(conn)
+  return update(deviceId, ackedSeq, updatedAt)
+}
+
+/**
+ * Prepares the statement of {@link updateDeviceCursor} once, for a loop that stores many acknowledgements in one
+ * transaction.
+ *
+ * @param conn - The writer connection.
+ * @returns A function that records one acknowledgement as {@link updateDeviceCursor} does, and returns 1 when the
+ * device has a cursor and 0 when the server has deleted it.
+ * @internal
+ */
+export async function prepareUpdateDeviceCursor(
+  conn: SQLiteConnection,
+): Promise<(deviceId: string, ackedSeq: bigint, updatedAt: number) => Promise<number>> {
   const stmt = await conn.prepare(
     `UPDATE "${DEVICE_CURSORS_TABLE}"
      SET acked_seq = max(acked_seq, CAST(? AS INTEGER)), updated_at = ?
      WHERE device_id = ?`,
   )
-  const result = await stmt.run(ackedSeq.toString(), updatedAt, deviceId)
-  return result.changes
+  return async (deviceId, ackedSeq, updatedAt) => {
+    const result = await stmt.run(ackedSeq.toString(), updatedAt, deviceId)
+    return result.changes
+  }
 }
 
 /**
@@ -164,6 +199,43 @@ export async function deleteExpiredDeviceCursors(
     bounds.changeAgeCutoff,
   )
   return result.changes
+}
+
+/**
+ * Returns the earliest moment from which a device cursor's retention window runs: the oldest of each cursor's last
+ * acknowledgement and of the recording time of the oldest change that waits for that device. A change feed prunes
+ * again once that moment plus the window has passed, because {@link deleteExpiredDeviceCursors} then drops the cursor.
+ *
+ * @param conn - The connection to read the tables through.
+ * @param changesTable - The change log table, which has to be a safe identifier.
+ * @returns The time in seconds since the Unix epoch, or `null` when no device has a cursor.
+ * @internal
+ */
+export async function selectMinDeviceCursorWindowStart(
+  conn: SQLiteConnection,
+  changesTable: string,
+): Promise<number | null> {
+  assertSafeIdentifier(changesTable)
+
+  const stmt = await conn.prepare(
+    `SELECT MIN(
+              MIN(
+                cursors.updated_at,
+                COALESCE(
+                  (SELECT oldest.changed_at FROM "${changesTable}" AS oldest
+                   WHERE oldest.seq = (
+                           SELECT MIN(later.seq) FROM "${changesTable}" AS later
+                           WHERE later.seq > cursors.acked_seq AND later.node_id != cursors.device_id
+                         )),
+                  cursors.updated_at
+                )
+              )
+            ) AS window_start
+     FROM "${DEVICE_CURSORS_TABLE}" AS cursors`,
+  )
+  const row = (await stmt.get()) as { window_start?: unknown } | undefined
+  const windowStart = row?.window_start
+  return windowStart === undefined || windowStart === null ? null : Number(windowStart)
 }
 
 /**

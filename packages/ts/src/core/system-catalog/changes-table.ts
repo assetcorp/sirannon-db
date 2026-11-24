@@ -200,6 +200,23 @@ export async function selectMaxRowChangeHlc(
 }
 
 /**
+ * Returns when the oldest change in the log was recorded, so that a change feed can prune again once that change
+ * passes the retention window.
+ *
+ * @param conn - The connection to read the change log through.
+ * @param tableName - The change log table, which has to be a safe identifier.
+ * @returns The time in seconds since the Unix epoch, or `null` when the log is empty.
+ * @internal
+ */
+export async function selectMinChangedAt(conn: SQLiteConnection, tableName: string): Promise<number | null> {
+  assertSafeIdentifier(tableName)
+  const stmt = await conn.prepare(`SELECT MIN(changed_at) AS changed_at FROM "${tableName}"`)
+  const row = (await stmt.get()) as { changed_at?: unknown } | undefined
+  const changedAt = row?.changed_at
+  return changedAt === undefined || changedAt === null ? null : Number(changedAt)
+}
+
+/**
  * Returns the highest sequence that the change log holds.
  *
  * @param conn - The connection to read the change log through.

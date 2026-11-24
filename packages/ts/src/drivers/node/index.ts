@@ -9,6 +9,7 @@ import { refuseEncryptedOpen } from '../../core/encryption/errors.js'
 import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { watchNodeDatabaseFile } from '../node-file-watch.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { nodeReportsColumnDetails, readWithColumns } from './column-reads.js'
 import { copyDatabaseWithNodeSqlite } from './copy.js'
@@ -84,6 +85,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
         }),
       ),
     resolveExtensionPath: nodeResolveExtensionPath,
+    watchDatabaseFile: watchNodeDatabaseFile,
     async open(path, options) {
       refuseEncryptedOpen('node:sqlite', options)
       const { DatabaseSync } = await import('node:sqlite')

@@ -2,6 +2,7 @@ import { TransactionGrouper } from '../core/cdc/transaction-grouper.js'
 import type { ChangeEvent } from '../core/types.js'
 import type { WSSendOutcome } from './ws-connection.js'
 import type { DeviceFramePacker, FrameAppendOutcome } from './ws-device-frames.js'
+import { DeviceSocketWatch } from './ws-device-socket-watch.js'
 
 export const DEFAULT_MAX_UNACKNOWLEDGED_CHANGES = 1_000
 
@@ -29,6 +30,7 @@ export interface DeviceStreamDeps {
   socketBuffered(): number
   socketCongested(): boolean
   flushSocket(): void
+  socketCheckIntervalMs: number
   onOverload(): void
   onFault(err: unknown): void
   readLog(afterSeq: bigint, upToSeq: bigint, limit: number): Promise<ChangeEvent[]>
@@ -64,8 +66,9 @@ export class DeviceChangeStream {
   private wakeRequested = false
   private socketWait = false
   private halted = false
-  private lastBuffered = 0
+  private liveFloorSeq: bigint
   private catchupBatch = MAX_CATCHUP_READ_BATCH
+  private readonly socketWatch: DeviceSocketWatch
 
   constructor(
     private readonly deps: DeviceStreamDeps,
@@ -78,6 +81,12 @@ export class DeviceChangeStream {
     this.highestQueuedSeq = baselineSeq
     this.processedSeq = baselineSeq
     this.ackedSeq = baselineSeq
+    this.liveFloorSeq = baselineSeq
+    this.socketWatch = new DeviceSocketWatch(
+      { buffered: deps.socketBuffered, congested: deps.socketCongested, flush: deps.flushSocket },
+      deps.socketCheckIntervalMs,
+      () => this.checkSocket(),
+    )
   }
 
   get deviceId(): string {
@@ -103,17 +112,12 @@ export class DeviceChangeStream {
   }
 
   receiveLive(event: ChangeEvent): void {
-    if (this.halted || this.mode !== 'live') return
+    if (this.halted || this.mode !== 'live' || event.seq <= this.liveFloorSeq) return
     this.ensureGrouper().receive(event)
   }
 
   onBatchEnd(atTxBoundary: boolean): void {
-    if (this.halted) return
-    this.nudgeStalledSocket()
-    if (this.socketWait && !this.deps.socketCongested()) {
-      this.onSocketDrain()
-    }
-    if (this.mode !== 'live') return
+    if (this.halted || this.mode !== 'live') return
     if (this.grouper !== null && !this.grouper.flush(atTxBoundary)) return
     this.settleFrame(this.deps.packer?.flush() ?? 'queued')
   }
@@ -141,25 +145,19 @@ export class DeviceChangeStream {
     this.halted = true
     this.grouper = null
     this.deps.packer?.clear()
+    this.socketWatch.stop()
   }
 
-  /**
-   * Sends a ping on a socket whose buffered bytes have stopped flushing.
-   * uWebSockets keeps the rest of a partial write queued until the next write
-   * on that socket and fires no drain event in the meantime, so the last
-   * changes of a stream with nothing more to send could stay in the buffer.
-   * When the buffered count is above zero, unchanged since the previous poll
-   * batch, and below the congestion threshold, this method sends a ping so that
-   * uWebSockets flushes the rest. It skips a congested socket, because that
-   * socket drains under its flow control and one more frame could push it
-   * past the backpressure limit.
-   */
-  private nudgeStalledSocket(): void {
-    const buffered = this.deps.socketBuffered()
-    if (buffered > 0 && buffered === this.lastBuffered && !this.deps.socketCongested()) {
-      this.deps.flushSocket()
-    }
-    this.lastBuffered = buffered
+  /** Starts checking the socket on a timer while it holds unsent bytes, after the server wrote another frame to it. */
+  watchSocket(): void {
+    if (this.halted || this.deps.socketBuffered() === 0) return
+    this.socketWatch.arm()
+  }
+
+  private checkSocket(): boolean {
+    if (this.halted) return false
+    if (this.socketWait && !this.deps.socketCongested()) this.onSocketDrain()
+    return this.socketWait
   }
 
   private ensureGrouper(): TransactionGrouper {
@@ -215,6 +213,7 @@ export class DeviceChangeStream {
    */
   private parkOnSocket(): void {
     this.socketWait = this.deps.socketCongested()
+    this.socketWatch.arm()
   }
 
   /**
@@ -372,6 +371,7 @@ export class DeviceChangeStream {
    */
   private goLive(): void {
     this.mode = 'live'
+    this.liveFloorSeq = this.catchupFrom
     const grouper = this.ensureGrouper()
     const atBoundary = this.deps.logCursorAtTxBoundary()
     if (!grouper.flush(atBoundary)) return

@@ -216,15 +216,12 @@ function buildJsonObject(columns: string[], ref: string): string {
       return (
         `'${escStr(col)}', ` +
         `CASE typeof(${ident}) ` +
-        `WHEN 'blob' THEN json(json_object('__sirannon_blob', hex(${ident}))) ` +
-        `WHEN 'integer' THEN ` +
-        `CASE WHEN ${ident} > ${SAFE_INT_BOUND_TEXT} OR ${ident} < -${SAFE_INT_BOUND_TEXT} ` +
-        `THEN json(json_object('__sirannon_int', printf('%d', ${ident}))) ` +
-        `ELSE ${ident} END ` +
-        `WHEN 'real' THEN ` +
-        `CASE WHEN ${ident} = ${POSITIVE_INFINITY_LITERAL} THEN json('${POSITIVE_INFINITY_LITERAL}') ` +
-        `WHEN ${ident} = -${POSITIVE_INFINITY_LITERAL} THEN json('-${POSITIVE_INFINITY_LITERAL}') ` +
-        `ELSE json(printf('${FULL_PRECISION_REAL_FORMAT}', ${ident})) END ` +
+        `WHEN 'integer' THEN iif(${ident} BETWEEN -${SAFE_INT_BOUND_TEXT} AND ${SAFE_INT_BOUND_TEXT}, ${ident}, ` +
+        `json_object('__sirannon_int', printf('%d', ${ident}))) ` +
+        `WHEN 'real' THEN json(iif(abs(${ident}) = ${POSITIVE_INFINITY_LITERAL}, ` +
+        `iif(${ident} > 0, '${POSITIVE_INFINITY_LITERAL}', '-${POSITIVE_INFINITY_LITERAL}'), ` +
+        `printf('${FULL_PRECISION_REAL_FORMAT}', ${ident}))) ` +
+        `WHEN 'blob' THEN json_object('__sirannon_blob', hex(${ident})) ` +
         `ELSE ${ident} END`
       )
     })

@@ -50,7 +50,7 @@ export interface ConnectionMetrics {
   databaseId: string
   /** The file path of the SQLite database. */
   path: string
-  /** The number of read connections in the database's pool, which is 0 on close. */
+  /** The most read connections that the database's pool opens as reads need them, which is 0 on close. */
   readerCount: number
   /** Whether the registry opened or closed the database. */
   event: 'open' | 'close'

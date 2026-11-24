@@ -8,6 +8,7 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { refuseEncryptedOpen } from '../../core/encryption/errors.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { watchNodeDatabaseFile } from '../node-file-watch.js'
 import { readWithColumns } from './column-reads.js'
 
 /**
@@ -46,6 +47,7 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
     },
     resolveExtensionPath: extensionPath => resolve(extensionPath),
     createWriterContext: asyncLocalWriterContext,
+    watchDatabaseFile: watchNodeDatabaseFile,
     async open(path, options) {
       refuseEncryptedOpen('bun:sqlite', options)
       const { Database } = await import('bun:sqlite')

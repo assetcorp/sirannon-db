@@ -18,6 +18,11 @@ export class BackupCopyAdmission {
 
   constructor(private readonly runExclusive: RunExclusive) {}
 
+  /** Returns `true` while SQLite writes a copy that this admission started. */
+  get copying(): boolean {
+    return this.running > 0
+  }
+
   /**
    * Runs an operation while no other operation holds the writer, after any key change that stopped copies has ended.
    *

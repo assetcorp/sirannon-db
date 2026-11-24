@@ -1,18 +1,16 @@
-import { ChangeTracker } from '../core/cdc/change-tracker.js'
-import {
-  applyDeviceCursorBoundary,
-  type ChangeRetentionOptions,
-  resolveDeviceRetentionPolicy,
-} from '../core/cdc/device-retention.js'
+import { type ChangeFeed, startChangeFeed } from '../core/cdc/change-feed.js'
+import { pruneChangeLog } from '../core/cdc/change-log-prune.js'
+import { ChangeTracker, DEFAULT_CHANGE_LOG_RETENTION_MS } from '../core/cdc/change-tracker.js'
+import { type ChangeRetentionOptions, resolveDeviceRetentionPolicy } from '../core/cdc/device-retention.js'
 import { ensureCdcEpoch } from '../core/cdc/epoch.js'
 import { SubscriptionManager } from '../core/cdc/subscription.js'
 import type { Database } from '../core/database.js'
 import type { SQLiteConnection } from '../core/driver/types.js'
 import { SirannonError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
+import { DeviceAckWriter } from './ws-ack-writer.js'
 
-const DEFAULT_POLL_INTERVAL_MS = 50
-const CLEANUP_INTERVAL_TICKS = 100
+const MAX_CONSECUTIVE_POLL_FAILURES = 10
 
 export function toChangeRetentionOptions(options?: {
   cdcRetentionMs?: number
@@ -30,10 +28,20 @@ export function toChangeRetentionOptions(options?: {
   }
 }
 
+/**
+ * The change feed that the server keeps for one database while a WebSocket subscription on it is open.
+ *
+ * @internal
+ */
 export interface CDCContext {
-  cdcConn: SQLiteConnection
+  /** Runs a read of the change log on a connection that leaves the writer free. */
+  read: <T>(read: (conn: SQLiteConnection) => Promise<T>) => Promise<T>
   tracker: ChangeTracker
   manager: SubscriptionManager
+  /** Stores device acknowledgements for this database in batches. */
+  acks: DeviceAckWriter
+  /** The interval at which a device stream checks a socket that holds unsent bytes, in milliseconds. */
+  pollIntervalMs: number
   stopPolling: () => void
   releaseHold: () => void
   epoch: string
@@ -67,7 +75,6 @@ export class CdcContextRegistry {
       if (this.closed) {
         ctx.stopPolling()
         ctx.releaseHold()
-        await ctx.cdcConn.close().catch(() => {})
         throw new SirannonError('WebSocket handler is shut down', 'HANDLER_CLOSED')
       }
       this.contexts.set(databaseId, ctx)
@@ -87,7 +94,6 @@ export class CdcContextRegistry {
 
     ctx.stopPolling()
     ctx.releaseHold()
-    ctx.cdcConn.close().catch(() => {})
     this.contexts.delete(databaseId)
   }
 
@@ -98,102 +104,60 @@ export class CdcContextRegistry {
     for (const ctx of this.contexts.values()) {
       ctx.stopPolling()
       ctx.releaseHold()
-      try {
-        await ctx.cdcConn.close()
-      } catch {}
     }
     this.contexts.clear()
   }
 
   private async createContext(database: Database): Promise<CDCContext> {
-    const cdcConn = await database.openFileConnection({ walMode: true })
-
     const retention = database.changeRetention.cdcRetention ?? this.retentionMs
     const deviceRetention = resolveDeviceRetentionPolicy(database.changeRetention, this.serverDeviceRetention)
-    const tracker = new ChangeTracker(retention === undefined ? undefined : { retention })
+    const retentionMs = retention ?? DEFAULT_CHANGE_LOG_RETENTION_MS
+    const tracker = new ChangeTracker({ retention: retentionMs })
     const manager = new SubscriptionManager(this.sirannon.metrics?.observeDispatch(database.id))
+    const read = <T>(fn: (conn: SQLiteConnection) => Promise<T>): Promise<T> => database.readChangeLog(fn)
     let epoch = ''
-    try {
-      await tracker.advanceToLatest(cdcConn)
-      await database.runCdcMaintenance(async writer => {
-        epoch = await ensureCdcEpoch(writer)
-      })
-    } catch (err) {
-      await cdcConn.close().catch(() => {})
-      throw err
-    }
+    await read(conn => tracker.advanceToLatest(conn))
+    await database.runCdcMaintenance(async writer => {
+      epoch = await ensureCdcEpoch(writer)
+    })
     if (epoch === '') {
-      await cdcConn.close().catch(() => {})
       throw new SirannonError(`Database '${database.id}' is closed`, 'DATABASE_CLOSED')
     }
 
-    const ctx: CDCContext = { cdcConn, tracker, manager, stopPolling: () => {}, releaseHold: () => {}, epoch }
-    let interval: ReturnType<typeof setInterval> | null = null
-    let inFlight: Promise<void> | null = null
-    let consecutiveErrors = 0
-    let tickCount = 0
-    const MAX_CONSECUTIVE_ERRORS = 10
-
-    const stopPolling = () => {
-      if (interval !== null) clearInterval(interval)
-      interval = null
-    }
-
-    const pollOnce = async () => {
-      try {
-        const events = await tracker.poll(ctx.cdcConn)
-        if (events.length > 0) {
-          manager.dispatch(events)
-        }
-        manager.endBatch(tracker.pollEndedAtTxBoundary)
-        consecutiveErrors = 0
-
-        tickCount++
-        if (tickCount >= CLEANUP_INTERVAL_TICKS) {
-          tickCount = 0
-          await database
-            .runCdcMaintenance(async writer => {
-              await applyDeviceCursorBoundary(writer, tracker, deviceRetention)
-              await tracker.cleanup(writer)
-            })
-            .catch(() => {})
-        }
-      } catch {
-        consecutiveErrors++
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          stopPolling()
-        }
-      }
-    }
-    const tick = () => {
-      if (manager.size === 0 || inFlight !== null) return
-      inFlight = pollOnce().finally(() => {
-        inFlight = null
-      })
-    }
-    const startPolling = () => {
-      stopPolling()
-      consecutiveErrors = 0
-      const started = setInterval(tick, DEFAULT_POLL_INTERVAL_MS) as ReturnType<typeof setInterval> & {
-        unref?: () => void
-      }
-      started.unref?.()
-      interval = started
-    }
-
-    ctx.stopPolling = stopPolling
-    startPolling()
-    ctx.releaseHold = database.holdFileConnection({
-      release: async () => {
-        stopPolling()
-        await inFlight
-        await ctx.cdcConn.close().catch(() => {})
+    const feed: ChangeFeed = startChangeFeed({
+      tracker,
+      manager,
+      signal: database.changeSignal,
+      intervalMs: database.cdcPollInterval,
+      readChanges: () => read(conn => tracker.poll(conn)),
+      prune: async () => {
+        let next: number | null = null
+        await database
+          .runCdcMaintenance(async writer => {
+            next = await pruneChangeLog(writer, tracker, deviceRetention, retentionMs)
+          })
+          .catch(() => {
+            feed.requestPrune()
+          })
+        return next
       },
+      onFailure: (_error, consecutiveFailures) => consecutiveFailures < MAX_CONSECUTIVE_POLL_FAILURES,
+    })
+    const releaseHold = database.holdFileConnection({
+      release: () => feed.pause(),
       reopen: async () => {
-        ctx.cdcConn = await database.openFileConnection({ walMode: true })
-        startPolling()
+        feed.resume()
       },
     })
-    return ctx
+    return {
+      read,
+      tracker,
+      manager,
+      acks: new DeviceAckWriter(database, () => feed.requestPrune()),
+      pollIntervalMs: database.cdcPollInterval,
+      stopPolling: () => feed.stop(),
+      releaseHold,
+      epoch,
+    }
   }
 }

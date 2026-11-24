@@ -28,6 +28,8 @@ An implementation provides a base error type carrying a `code` string. When an e
 | `DATABASE_OPEN_FAILED` | A database could not be opened. |
 | `READ_ONLY` | A write was attempted on a read-only database. |
 | `QUERY_ERROR` | SQLite failed to prepare or execute a statement. |
+| `INVALID_READ_LIMIT` | A `maxRows` or `maxBytes` of `queryWithColumns` was not an integer from 0 to 2^53 - 1. |
+| `COLUMN_DETAILS_UNSUPPORTED` | `queryWithColumns` ran on a driver that reports no column details, or on one that cannot apply its limits to a result whose column names repeat. |
 | `FORBIDDEN_SQL` | A statement reached a reserved `_sirannon` table, modified the `sqlite_` catalogue, used `ATTACH`, `DETACH`, or `VACUUM INTO`, named the `writable_schema`, `temp_store_directory`, `data_store_directory`, or `wal_checkpoint` pragma, opened, ended, or marked a transaction with `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, or `RELEASE`, or created or dropped a temporary table, view, index, or trigger. |
 | `TRANSACTION_ERROR` | SQLite refuses to commit a transaction whose statements all succeed. |
 | `TRANSACTION_CLOSED` | A call reached a `Transaction` after its callback returned or threw. |

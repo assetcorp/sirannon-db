@@ -56,6 +56,7 @@ A browser client carries a short-lived credential in `webSocketProtocols`. A cli
 RemoteDatabase {
   query<T>(sql, params?, options?):             async -> List<T>
   query<Row>(operation: OperationRef, args, options?): async -> List<Row>
+  queryWithColumns(sql, params?, options?):     async -> QueryWithColumnsResult
   execute(sql, params?):                        async -> ExecuteResponse
   execute(operation: OperationRef, args, writeConcern?): async -> List<ExecuteResponse>
   live<Row>(operation: OperationRef or name, args?): async -> LiveQuery<Row>
@@ -72,13 +73,15 @@ OperationRef<Args, Row> { name: string }
 
 This is a subset of the local Database API adapted for remote use. `transaction` takes a statement list, and `queryOne` and `executeBatch` are absent. `transaction` is the way a client runs several statements in one transaction, because the server refuses `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, and `RELEASE` with `FORBIDDEN_SQL` (see [05-server.md](05-server.md)). Each method maps to the HTTP route or WebSocket message of the same name (see [05-server.md](05-server.md)). `execute` returns `lastInsertRowId` as a JSON number or a decimal string, undecoded. `loadAll` batches an iterable of parameter sets (recommended batch size 1000), sending only the final batch with `checkpoint: true`; a non-positive `batchSize` fails with `INVALID_ARGUMENT`.
 
+`queryWithColumns` must send a columns read (see [05-server.md](05-server.md#http-endpoints-normative)) with the caller's `readConcern`, `maxRows`, and `maxBytes`, and decode each value from the value encoding. It must fail with `INVALID_ARGUMENT` before it sends anything when a limit is not an integer from 0 to 2^53 - 1, and with `INVALID_RESPONSE` when the answer lacks a `columns` list of column details, a `rows` list, or a `truncated` of `rows`, `bytes`, or null, or holds a row whose length differs from the number of columns.
+
 A client may also offer `checkpoint(): async -> CheckpointResult`, which sends `POST /db/{id}/checkpoint` over HTTP whatever transport the client uses, and sends it to the primary on the topology transport. The client bounds the request by `requestTimeout`, with a 30-second default, on either transport, and reports `TIMEOUT` when that deadline expires. The client must fail with `INVALID_RESPONSE` an answer whose counts are not non-negative integers, whose `framesCheckpointed` exceeds `framesInLog`, or that reports `emptied` with `busy` set or with frames in the log. Closing the client must cancel a checkpoint request still in progress and fail it with `TRANSPORT_ERROR`.
 
 A first argument that names a registered operation runs that operation. `query` returns its rows, and `execute` returns one result per statement of the write. An operation reference holds the name at run time, and the argument and row types of that operation at compile time, so an argument or a column the server does not serve fails to compile. An implementation without a type system passes the name as a string.
 
 ### Refusing SQL Before It Is Sent
 
-A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. Closing a database must cancel a read of that answer still in progress, and must fail each statement that waits for it with `TRANSPORT_ERROR`. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
+A client must read `GET /capabilities` before it sends a statement and must fail with `SQL_NOT_ACCEPTED` when `query.sql` is absent, so that a statement a server refuses never leaves the process. This covers `query`, `queryWithColumns`, `execute`, `transaction`, `batch`, `load`, and `loadAll` with a statement, and never a registered operation. A client reads that answer once per server and caches it. Closing a database must cancel a read of that answer still in progress, and must fail each statement that waits for it with `TRANSPORT_ERROR`. A server that serves no `/capabilities` predates the option and accepts statements. The server also refuses on its own (see [05-server.md](05-server.md)), because a hand-written client performs no check.
 
 ### Live Queries
 

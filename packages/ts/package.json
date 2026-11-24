@@ -154,7 +154,7 @@
     "NOTICE"
   ],
   "engines": {
-    "node": ">=22.16.0"
+    "node": ">=22.20.0"
   },
   "peerDependencies": {
     "@bufbuild/protobuf": ">=2.0.0",

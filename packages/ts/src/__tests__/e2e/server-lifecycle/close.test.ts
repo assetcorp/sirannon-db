@@ -3,6 +3,7 @@ import net from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { SirannonClient } from '../../../client/index.js'
 import { SirannonError } from '../../../core/errors.js'
 import { Sirannon } from '../../../core/sirannon.js'
 import type { Params, QueryOptions, ServerExecutionTarget, ServerOptions } from '../../../core/types.js'
@@ -27,6 +28,8 @@ const CLOSE_TIMEOUT_MS = 250
 const TIMER_SLACK_MS = 25
 const LARGEST_TIMER_DELAY_MS = 2_147_483_647
 const SELECT_ALL_MINUTES = 'SELECT id, body FROM minutes ORDER BY id'
+const LARGE_ANSWER_ROWS = 20_000
+const LARGE_ANSWER_BODY_CHARS = 500
 
 interface Served {
   sirannon: Sirannon
@@ -195,6 +198,36 @@ function heldAuthentication(): { options: ServerOptions; entered: () => boolean;
         return { user: 'clerk' }
       },
     },
+    entered: () => entered,
+    release: () => release(),
+  }
+}
+
+function heldStatement(heldSql: string): HeldReads {
+  let entered = 0
+  let release: () => void = () => {}
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  return {
+    options: sirannon => ({
+      resolveExecutionTarget: async id => {
+        const db = await sirannon.resolve(id)
+        if (!db) return undefined
+        const target: ServerExecutionTarget = {
+          query: async <T>(sql: string, params?: Params, queryOptions?: QueryOptions): Promise<T[]> => {
+            if (sql === heldSql) {
+              entered++
+              await gate
+            }
+            return db.query<T>(sql, params, queryOptions)
+          },
+          execute: (sql, params, executeOptions) => db.execute(sql, params, executeOptions),
+          transaction: fn => db.transaction(fn),
+        }
+        return target
+      },
+    }),
     entered: () => entered,
     release: () => release(),
   }
@@ -437,5 +470,37 @@ describe('closing a server', () => {
       body: COUNT_ROWS,
     })
     expect(await answered.json()).toEqual({ rows: [{ n: 1 }] })
+  })
+})
+
+describe.each(['http', 'websocket'] as const)('closing a server under the published client over %s', transport => {
+  it('lets a read that an execution target holds finish inside the close timeout and returns its full answer, however large', async () => {
+    const held = heldStatement(SELECT_ALL_MINUTES)
+    const served = await serve(0, 0, held.options)
+    const database = await served.sirannon.resolve(DATABASE_ID)
+    await database?.execute(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${LARGE_ANSWER_ROWS})
+       INSERT INTO minutes (body) SELECT printf('%0${LARGE_ANSWER_BODY_CHARS}d', i) FROM n`,
+    )
+    const client = new SirannonClient(`http://127.0.0.1:${served.port}`, { transport, autoReconnect: false })
+    try {
+      const db = client.database(DATABASE_ID)
+      expect(await db.query(COUNT_SQL)).toEqual([{ n: LARGE_ANSWER_ROWS }])
+      const reading = db.query(SELECT_ALL_MINUTES).then(
+        rows => ({ ok: true as const, rows }),
+        (error: unknown) => ({ ok: false as const, error }),
+      )
+      await waitFor(() => held.entered() === 1, 'the read reaching the execution target')
+
+      const closing = served.server.close({ timeoutMs: SOCKET_DEADLINE_MS })
+      held.release()
+      const outcome = await within(reading, 'the held read')
+      await within(closing, 'close after the held read')
+
+      const stored = readSqlite<{ id: bigint | number; body: string }>(served.path, SELECT_ALL_MINUTES)
+      expect(outcome).toEqual({ ok: true, rows: stored.map(row => ({ id: Number(row.id), body: row.body })) })
+    } finally {
+      client.close()
+    }
   })
 })

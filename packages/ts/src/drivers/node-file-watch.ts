@@ -18,6 +18,7 @@ interface DirectoryWatch {
 
 const JOURNAL_SUFFIXES = ['-wal', '-journal'] as const
 const WRITTEN_FILE_SUFFIXES = ['', ...JOURNAL_SUFFIXES] as const
+const SWEPT_FILE_SUFFIXES = ['', '-wal'] as const
 const MISSED_EVENT_SWEEP_MS = 30_000
 const ABSENT_FILE_SIGNATURE = '-'
 const EMPTY_JOURNAL_SIGNATURE = ABSENT_FILE_SIGNATURE
@@ -65,28 +66,34 @@ function dispatchFileEvent(
   const entries = directory.entriesByFileName.get(fileNameKey(name))
   if (entries === undefined) return
   if (eventType === 'rename' && isJournalFileName(name)) {
-    void notifyIfJournalExists(join(path, name), entries)
+    void notifyIfJournalExists(join(path, name), directory, [...entries])
     return
   }
   for (const entry of entries) notifyEntry(entry)
 }
 
-async function notifyIfJournalExists(journalPath: string, entries: ReadonlySet<FileWatchEntry>): Promise<void> {
+async function notifyIfJournalExists(
+  journalPath: string,
+  directory: DirectoryWatch,
+  entries: readonly FileWatchEntry[],
+): Promise<void> {
   try {
     await stat(journalPath)
   } catch {
     return
   }
-  for (const entry of entries) notifyEntry(entry)
+  for (const entry of entries) {
+    if (directory.entries.has(entry)) notifyEntry(entry)
+  }
 }
 
 async function fileSignature(filePaths: readonly string[]): Promise<string> {
   const parts: string[] = []
   for (const filePath of filePaths) {
     try {
-      const stats = await stat(filePath, { bigint: true })
-      const emptyJournal = stats.size === 0n && isJournalFileName(basename(filePath))
-      parts.push(emptyJournal ? EMPTY_JOURNAL_SIGNATURE : `${stats.ino}:${stats.size}:${stats.mtimeNs}`)
+      const stats = await stat(filePath)
+      const emptyJournal = stats.size === 0 && isJournalFileName(basename(filePath))
+      parts.push(emptyJournal ? EMPTY_JOURNAL_SIGNATURE : `${stats.ino}:${stats.size}:${stats.mtimeMs}`)
     } catch {
       parts.push(ABSENT_FILE_SIGNATURE)
     }
@@ -183,9 +190,10 @@ function removeEntry(path: string, directory: DirectoryWatch, keys: readonly str
  * watch reports writes from every process, including this one. It skips the removal of a journal file, which SQLite
  * does when the last connection closes and which carries no write, so that a database which closes its idle
  * connections receives no read for it. Every 30 seconds the watch also compares the size, modification time, and
- * inode of each watched file with what it recorded, counting an empty journal as an absent one, and reports a write
- * for each database whose files differ, which catches a write whose event the kernel dropped when its event queue
- * overflowed.
+ * inode of the database file and its write-ahead log with what it recorded, counting an empty log as an absent one,
+ * and reports a write for each database whose files differ, which catches a write whose event the kernel dropped when
+ * its event queue overflowed. A commit in rollback-journal mode changes the database file, so the comparison skips
+ * the rollback journal.
  *
  * @param path - The database file.
  * @param onChange - Called after each write to one of the files, and must return at once.
@@ -205,7 +213,7 @@ export function watchNodeDatabaseFile(path: string, onChange: () => void, onLost
   const entry: FileWatchEntry = {
     onChange,
     onLost,
-    filePaths: WRITTEN_FILE_SUFFIXES.map(suffix => `${databasePath}${suffix}`),
+    filePaths: SWEPT_FILE_SUFFIXES.map(suffix => `${databasePath}${suffix}`),
     signature: null,
   }
   const keys = WRITTEN_FILE_SUFFIXES.map(suffix => fileNameKey(`${fileName}${suffix}`))

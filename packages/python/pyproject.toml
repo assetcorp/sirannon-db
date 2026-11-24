@@ -1,6 +1,6 @@
 [project]
 name = "sirannon-client"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python client for the Sirannon database server, with a typed method for every HTTP route, change subscriptions that resume after a reconnection, live queries, and topology-aware routing."
 readme = "README.md"
 requires-python = ">=3.11"

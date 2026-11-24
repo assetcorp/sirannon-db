@@ -43,12 +43,12 @@ export class DeviceAckWriter {
 
   /**
    * @param database - The database whose cursor table the writer updates.
-   * @param onCursorCreated - Called after a transaction that stored the first acknowledgement of a device that held no
-   * cursor, whose window can expire the cursor without another change, so that the change feed prunes again.
+   * @param onCursorsStored - Called after a transaction stores acknowledgements, so that the change feed can prune
+   * changes that those cursors release and schedule cursor expiry.
    */
   constructor(
     private readonly database: Database,
-    private readonly onCursorCreated: () => void,
+    private readonly onCursorsStored: () => void,
   ) {}
 
   /**
@@ -113,16 +113,16 @@ export class DeviceAckWriter {
   }
 
   private async store(batch: PendingAck[]): Promise<void> {
-    let outcomes: boolean[] | null = null
+    const outcomes: { stored: boolean[] | null } = { stored: null }
     try {
       await this.database.runCdcMaintenance(async writer => {
-        outcomes = await writer.transaction(tx => writeAcks(tx, batch))
+        outcomes.stored = await writer.transaction(tx => writeAcks(tx, batch))
       })
     } catch (err) {
       settleBatch(batch, waiter => waiter.reject(err))
       return
     }
-    const stored: boolean[] | null = outcomes
+    const stored = outcomes.stored
     if (stored === null) {
       const closed = new SirannonError(`Database '${this.database.id}' is closed`, 'DATABASE_CLOSED')
       settleBatch(batch, waiter => waiter.reject(closed))
@@ -132,7 +132,7 @@ export class DeviceAckWriter {
       const outcome = stored[index] === true
       for (const waiter of ack.waiters) waiter.resolve(outcome)
     })
-    if (batch.some(ack => !ack.cursorHeld)) this.onCursorCreated()
+    if (stored.some(outcome => outcome)) this.onCursorsStored()
   }
 }
 

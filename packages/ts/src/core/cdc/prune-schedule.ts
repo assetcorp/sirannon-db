@@ -7,7 +7,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647
  *
  * A prune runs at most once per 100 poll intervals, which is the cadence of a timer-driven poller that prunes every
  * 100th read. The schedule asks for a prune within that cadence after a read that found changes, after a prune
- * boundary moves, after a device acknowledges for the first time, and on every read while the poller reads on a
+ * boundary moves, after a device acknowledges, when a feed starts, and on every read while the poller reads on a
  * fixed interval. Each prune reports when the oldest remaining change or cursor passes its window, and the schedule
  * sets one timer for that moment.
  *

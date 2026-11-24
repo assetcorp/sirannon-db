@@ -40,7 +40,7 @@ export interface ChangeFeed {
   pause(): Promise<void>
   /** Starts reading again after {@link ChangeFeed.pause}, when the manager has a subscription. */
   resume(): void
-  /** Asks for a prune within one prune cadence, after a write that can expire a device cursor without a change. */
+  /** Asks for a prune within one prune cadence after a write changes a device cursor. */
   requestPrune(): void
   /** Stops reading for good. */
   stop(): void
@@ -103,6 +103,7 @@ export function startChangeFeed(options: ChangeFeedOptions): ChangeFeed {
     if (stopped || paused) return
     if (active) {
       poller.start()
+      prunes.requestSoon()
       prunes.resume()
       return
     }

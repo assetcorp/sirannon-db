@@ -55,11 +55,7 @@ func (t *wsTransport) queryColumns(ctx context.Context, call columnsCall) (Query
 	if err != nil {
 		return QueryColumnsResponse{}, err
 	}
-	var answer QueryColumnsResponse
-	if err := decodeData(data, &answer); err != nil {
-		return QueryColumnsResponse{}, err
-	}
-	return checkColumnsAnswer(answer)
+	return columnsAnswerFrom(data)
 }
 
 func (t *wsTransport) execute(ctx context.Context, call statementCall) ([]ExecuteResult, error) {

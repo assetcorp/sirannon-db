@@ -2,6 +2,7 @@ package sirannon
 
 import (
 	"context"
+	"encoding/json"
 )
 
 const columnsShape = "columns"
@@ -78,7 +79,30 @@ func columnsRequest(call columnsCall) (QueryRequest, error) {
 	return body, nil
 }
 
-func checkColumnsAnswer(answer QueryColumnsResponse) (QueryColumnsResponse, error) {
+func columnsAnswerFrom(data json.RawMessage) (QueryColumnsResponse, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil || fields["truncated"] == nil {
+		return QueryColumnsResponse{}, invalidResponse(malformedColumnsAnswer)
+	}
+	var columns []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["columns"], &columns); err != nil || columns == nil {
+		return QueryColumnsResponse{}, invalidResponse(malformedColumnsAnswer)
+	}
+	for _, column := range columns {
+		if jsonKindOf(column["name"]) != "string" {
+			return QueryColumnsResponse{}, invalidResponse(malformedColumnsAnswer)
+		}
+		for _, field := range []string{"declaredType", "table", "column", "database"} {
+			kind := jsonKindOf(column[field])
+			if kind != "string" && kind != "null" {
+				return QueryColumnsResponse{}, invalidResponse(malformedColumnsAnswer)
+			}
+		}
+	}
+	var answer QueryColumnsResponse
+	if err := decodeWire(data, &answer); err != nil {
+		return QueryColumnsResponse{}, invalidResponse(malformedColumnsAnswer)
+	}
 	if answer.Columns == nil || answer.Rows == nil {
 		return QueryColumnsResponse{}, invalidResponse(malformedColumnsAnswer)
 	}

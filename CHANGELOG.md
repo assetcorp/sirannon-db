@@ -1,3 +1,15 @@
+## 0.4.6 (2026-11-24)
+
+### 🩹 Fixes
+
+- **encryption:** identify database files through SQLite so an open keeps the process's locks ([99b6905](https://github.com/assetcorp/sirannon-db/commit/99b6905))
+- **encryption:** name both keys for a marker that an older release left beside the original file ([e7b0e6e](https://github.com/assetcorp/sirannon-db/commit/e7b0e6e))
+- **encryption:** classify files without starting journal recovery ([eda29a5](https://github.com/assetcorp/sirannon-db/commit/eda29a5))
+
+### ❤️ Thank You
+
+- assetcorp @assetcorp
+
 ## 0.4.5 (2026-11-24)
 
 ### 🚀 Features

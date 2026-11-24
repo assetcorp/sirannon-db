@@ -85,4 +85,60 @@ describe.each([
       oracle.close()
     }
   })
+
+  it('commits a subscriber write to another database separately from the transaction that subscribed', async () => {
+    const source = await openOrders(driver)
+    const target = await openOrders(driver === betterSqlite3 ? nodeSqlite : betterSqlite3)
+    await source.db.execute('INSERT INTO orders VALUES (1)')
+    let called = false
+    let completed = false
+    const failures: Error[] = []
+    await expect(
+      target.db.transaction(async () => {
+        source.db.on('orders').subscribe(
+          async event => {
+            called = true
+            await target.db.execute('INSERT INTO receipts VALUES (?)', [event.row.id])
+            completed = true
+          },
+          { onError: error => failures.push(error) },
+        )
+        await waitFor(() => called, 'the subscriber callback to start')
+        throw new Error('Cancel the target transaction')
+      }),
+    ).rejects.toThrow('Cancel the target transaction')
+    await waitFor(() => completed || failures.length > 0, 'the subscriber write to settle')
+    expect(failures).toEqual([])
+    const oracle = new BetterSqlite3(target.path, { readonly: true })
+    try {
+      expect(oracle.prepare('SELECT id FROM receipts').all()).toEqual([{ id: 1 }])
+    } finally {
+      oracle.close()
+    }
+  })
+
+  it('preserves both writer contexts for explicit nested transaction callbacks across databases', async () => {
+    const outer = await openOrders(driver)
+    const inner = await openOrders(driver === betterSqlite3 ? nodeSqlite : betterSqlite3)
+    await expect(
+      outer.db.transaction(async () => {
+        await inner.db.transaction(async () => {
+          await outer.db.execute('INSERT INTO receipts VALUES (1)')
+          await inner.db.execute('INSERT INTO receipts VALUES (2)')
+        })
+        throw new Error('Cancel only the outer transaction')
+      }),
+    ).rejects.toThrow('Cancel only the outer transaction')
+    for (const [path, expected] of [
+      [outer.path, []],
+      [inner.path, [{ id: 2 }]],
+    ] as const) {
+      const oracle = new BetterSqlite3(path, { readonly: true })
+      try {
+        expect(oracle.prepare('SELECT id FROM receipts').all()).toEqual(expected)
+      } finally {
+        oracle.close()
+      }
+    }
+  })
 })

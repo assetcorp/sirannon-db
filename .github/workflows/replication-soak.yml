@@ -27,7 +27,7 @@ jobs:
       matrix:
         include:
           - node-major: 22
-            node-version: 22.16.0
+            node-version: 22.20.0
           - node-major: 24
             node-version: 24
 

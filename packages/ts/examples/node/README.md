@@ -4,7 +4,7 @@ In this self-contained Node.js example, one script uses the core features of Sir
 
 ## Setup
 
-To start this example, you need Node.js 22.16.0 or newer and pnpm.
+To start this example, you need Node.js 22.20.0 or newer and pnpm.
 
 The example imports `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 

@@ -17,6 +17,7 @@ const INSERT_ITEM = 'INSERT INTO items (name, qty) VALUES (?, ?)'
 const SEEDED_ITEMS = 12
 const MORE_STATEMENTS_THAN_ANY_CACHE = 300
 const LARGE_BATCH = 5000
+const DEFAULT_READ_POOL_SIZE = 4
 const STATEMENT_LESS_SQL = ['', ' \t\r\n\f', ';', ' ; ;', '-- a comment', '/* a comment', '/**/;/**/', '\u0000SELECT 1']
 
 type Call = [label: string, call: (db: Database, sql: string) => Promise<unknown>]
@@ -174,6 +175,40 @@ describe.each(DRIVER_PLACEMENTS)('reads and writes with $label', ({ driver, writ
       { id: 2, amount: 7, reason: 'damaged' },
     ])
     expect(columnRaw(path, 'SELECT reason FROM refunds ORDER BY id')).toEqual(['damaged', 'damaged'])
+  })
+
+  it('returns every column that a schema change adds from statements that every connection prepared before it', async () => {
+    const { db, path } = await openItems()
+    const readItems = 'SELECT * FROM items ORDER BY id'
+    const insertReturning = "INSERT INTO items (name, qty) VALUES ('returned', 1) RETURNING *"
+    const readsPerConnection = 2 * DEFAULT_READ_POOL_SIZE + 1
+    const oracleItems = () =>
+      readRaw<{ id: bigint; name: string; qty: bigint; origin: string }>(path, readItems).map(row => ({
+        id: Number(row.id),
+        name: row.name,
+        qty: Number(row.qty),
+        origin: row.origin,
+      }))
+
+    for (let read = 0; read < readsPerConnection; read++) {
+      await db.query(readItems)
+      await db.transaction(tx => tx.query(readItems))
+    }
+    await db.transaction(tx => tx.query(insertReturning))
+    await db.execute("DELETE FROM items WHERE name = 'returned'")
+
+    await db.execute("ALTER TABLE items ADD COLUMN origin TEXT NOT NULL DEFAULT 'warehouse'")
+    const expected = oracleItems()
+    expect(expected).toHaveLength(SEEDED_ITEMS)
+    for (let read = 0; read < readsPerConnection; read++) {
+      expect(await db.query(readItems)).toEqual(expected)
+      expect(await db.transaction(tx => tx.query(readItems))).toEqual(expected)
+    }
+
+    const returned = await db.transaction(tx => tx.query(insertReturning))
+    expect(returned).toEqual(oracleItems().filter(row => row.name === 'returned'))
+    expect(returned[0]).toHaveProperty('origin', 'warehouse')
+    expect(countRaw(path, 'items')).toBe(SEEDED_ITEMS + 1)
   })
 
   it('applies a batch completely or not at all', async () => {

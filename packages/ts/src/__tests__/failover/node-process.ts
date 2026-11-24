@@ -197,6 +197,10 @@ export class FailoverNodeProcess {
     return (await this.request('liveItemIds', {}, 10_000)) as number[] | null
   }
 
+  async rejoinState(): Promise<unknown> {
+    return this.request('rejoinState', {}, 10_000)
+  }
+
   async holdInSyncUpdates(
     filter: { removesNodeId?: string; admissions?: boolean; admitsNodeId?: string } = {},
   ): Promise<void> {

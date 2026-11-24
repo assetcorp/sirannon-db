@@ -283,6 +283,25 @@ async function handleMessage(message: RequestMessage): Promise<void> {
       sendResponse(id, true, serializeJson({ ...engine.status(), recentErrors }))
       return
     }
+    if (command === 'rejoinState') {
+      const resumeRequest = engine.history.resumeRequest
+      sendResponse(
+        id,
+        true,
+        serializeJson({
+          ...engine.rejoin,
+          anchoredTerm: engine.history.anchoredTerm,
+          reconciling: engine.history.reconciling,
+          resumeRequest: {
+            id: resumeRequest.id,
+            term: resumeRequest.term,
+            requestedAt: resumeRequest.requestedAt,
+            keepsBeforeCopy: resumeRequest.keepsBeforeCopy,
+          },
+        }),
+      )
+      return
+    }
     if (command === 'holdInSyncUpdates') {
       const removesNodeId = payload.removesNodeId
       inSyncUpdateHold.hold({

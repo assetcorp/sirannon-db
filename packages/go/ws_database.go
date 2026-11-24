@@ -41,6 +41,23 @@ func (t *wsTransport) query(ctx context.Context, call statementCall) ([]Row, err
 	return rowsOf(answer.Rows), nil
 }
 
+func (t *wsTransport) queryColumns(ctx context.Context, call columnsCall) (QueryColumnsResponse, error) {
+	body, err := columnsRequest(call)
+	if err != nil {
+		return QueryColumnsResponse{}, err
+	}
+	id := t.nextID()
+	frame := WSQueryMessage{Type: "query", ID: id, SQL: Ptr(body.SQL), ReadConcern: body.ReadConcern, Shape: body.Shape, MaxRows: body.MaxRows, MaxBytes: body.MaxBytes}
+	if body.Params != nil {
+		frame.Params = &WSQueryMessageParams{Map: body.Params.Map, List: body.Params.List}
+	}
+	data, err := t.request(ctx, id, frame, true)
+	if err != nil {
+		return QueryColumnsResponse{}, err
+	}
+	return columnsAnswerFrom(data)
+}
+
 func (t *wsTransport) execute(ctx context.Context, call statementCall) ([]ExecuteResult, error) {
 	id := t.nextID()
 	frame := WSExecuteMessage{Type: "execute", ID: id, WriteConcern: call.writeConcern}

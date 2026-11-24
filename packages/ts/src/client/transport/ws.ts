@@ -7,14 +7,16 @@ import type {
   BatchResponse,
   ExecuteResponse,
   LoadResponse,
+  QueryColumnsResponse,
   QueryResponse,
   TransactionResponse,
   WSClientMessage,
 } from '../../server/protocol.js'
+import { type ColumnQueryRequest, columnQueryBody, columnsAnswerFrom } from '../column-answers.js'
 import { toHttpUrl } from '../endpoint-urls.js'
-import { postJson } from '../http-json.js'
 import type { LiveHandlers, RegistryDigestSource, RemoteSubscription, SubscribeOptions, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
+import { checkpointOverHttp } from './http-checkpoint.js'
 import type { ClientWebSocket } from './ws-connect.js'
 import { openWebSocket } from './ws-connect.js'
 import { routeServerMessage } from './ws-inbound.js'
@@ -96,6 +98,15 @@ export class WebSocketTransport implements Transport {
     await this.ensureConnected()
     const response = await this.request<QueryResponse>(queryFrame(this.nextId(), sql, params, readConcern))
     return { rows: decodeWireRowsInPlace(response.rows ?? []) as Record<string, unknown>[] }
+  }
+
+  /** Sends a read that asks for each column's details with each row as an array, under the two limits. */
+  async queryWithColumns(sql: string, params?: Params, request?: ColumnQueryRequest): Promise<QueryColumnsResponse> {
+    await this.ensureConnected()
+    const id = this.nextId()
+    return columnsAnswerFrom(
+      await this.request<unknown>({ type: 'query', id, ...columnQueryBody(sql, params, request) }),
+    )
   }
 
   /** Sends one write. */
@@ -231,24 +242,14 @@ export class WebSocketTransport implements Transport {
    */
   async checkpoint(): Promise<CheckpointResponse> {
     if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
-    const request = new AbortController()
-    this.httpRequests.add(request)
-    try {
-      const answer = await postJson(
-        `${toHttpUrl(this.url)}/checkpoint`,
-        {},
-        this.headers,
-        this.requestTimeout,
-        request.signal,
-      )
-      if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport closed')
-      return answer as CheckpointResponse
-    } catch (err) {
-      if (this.closed) throw new RemoteError('TRANSPORT_ERROR', 'Transport closed')
-      throw err
-    } finally {
-      this.httpRequests.delete(request)
-    }
+    return checkpointOverHttp(
+      toHttpUrl(this.url),
+      this.headers,
+      this.requestTimeout,
+      this.httpRequests,
+      () => this.closed,
+      () => new RemoteError('TRANSPORT_ERROR', 'Transport closed'),
+    )
   }
 
   /** Closes the transport and ends every subscription on it. */

@@ -86,7 +86,7 @@ Clients URL-encode `{id}` and `{name}`, and the server decodes each one before i
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/db/{id}/query` | Executes a SELECT and returns `{ rows }` |
+| `POST` | `/db/{id}/query` | Executes a SELECT and returns `{ rows }`, or `{ columns, rows, truncated }` when the body sets `shape` to `columns` |
 | `POST` | `/db/{id}/query/{name}` | Executes a registered read and returns `{ rows }` |
 | `POST` | `/db/{id}/execute` | Executes a mutation and returns `{ changes, lastInsertRowId }` |
 | `POST` | `/db/{id}/execute/{name}` | Executes a registered write and returns `{ results }` |
@@ -111,6 +111,16 @@ Clients URL-encode `{id}` and `{name}`, and the server decodes each one before i
 | `GET` | `/capabilities` | Returns the announced capabilities and the registry digest |
 | `GET` | `/health` | Answers a liveness check |
 | `GET` | `/health/ready` | Answers a readiness check with per-database status |
+
+When a query body sets `"shape": "columns"`, the server answers with the `name`, `declaredType`, `table`, `column`, and `database` of every result column, and with each row as an array in column order. It sets a field to `null` when SQLite or the driver doesn't report that field. Because an array keeps one slot for each column, two columns that share a name, such as `a.id` and `b.id` in a join, both keep their values:
+
+```json
+{ "sql": "SELECT a.id, b.id, a.label FROM items a JOIN items b ON a.parent = b.id", "shape": "columns", "maxRows": 500, "maxBytes": 1048576 }
+```
+
+The body can also set `maxRows` and `maxBytes`, each to a whole number from 0 to 2^53-1. The server then stops the read at whichever limit the rows reach first, and it sets `truncated` to `rows` or `bytes`. It counts 8 bytes towards `maxBytes` for every value, and it adds the length of the UTF-8 encoding of each TEXT value and the length of each BLOB, as the [core guide](core.md#column-details-and-capped-reads) explains.
+
+Over HTTP the server answers `400 INVALID_REQUEST`, and over a WebSocket it answers with an `INVALID_MESSAGE` error, when a body sets `shape` to any value other than `columns`, sets a limit outside that range, or sets either limit without `shape`. A WebSocket `query` message that carries `name` receives the same `INVALID_MESSAGE` error when it sets `shape`, `maxRows`, or `maxBytes`, because a registered read always answers with `{ rows }`. A body without `shape` receives `{ rows }`.
 
 The server serves `/db/{id}/checkpoint` whatever `acceptSql` is set to, so keep it for operators in your `authenticate` hook, as the backup routes below show. On a database with `backups`, the answer waits for a turn of the backup cycle. Read the [device sync guide](device-sync.md) for the four device routes. A read body can include `readConcern` and a write body can include `writeConcern`, and the [replication guide](replication.md#read-concern) defines both.
 
@@ -195,6 +205,7 @@ Connect to `ws://host:port/db/{id}`. Every message has a `type` and an `id` that
 | Inbound `type` | Fields | Reply |
 | --- | --- | --- |
 | `query` | `sql`, `params?`, `readConcern?` | `{ type: 'result', data: { rows } }` |
+| `query` | `sql`, `params?`, `readConcern?`, `shape: 'columns'`, `maxRows?`, `maxBytes?` | `{ type: 'result', data: { columns, rows, truncated } }` |
 | `query` | `name`, `args?`, `readConcern?` | `{ type: 'result', data: { rows } }` |
 | `execute` | `sql`, `params?` | `{ type: 'result', data: { changes, lastInsertRowId } }` |
 | `execute` | `name`, `args?`, `writeConcern?` | `{ type: 'result', data: { results } }` |

@@ -13,9 +13,13 @@ declare module 'bun:sqlite' {
   }
 
   export class Statement<Row = unknown> {
+    readonly columnNames: string[]
+    readonly declaredTypes?: (string | null)[] | null
     all(...params: unknown[]): Row[]
     get(...params: unknown[]): Row | null
     run(...params: unknown[]): BunSqliteChanges
+    values(...params: unknown[]): unknown[][]
+    iterate(...params: unknown[]): IterableIterator<Record<string, unknown>>
     finalize(): void
   }
 

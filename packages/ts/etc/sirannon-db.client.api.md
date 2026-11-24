@@ -5,6 +5,13 @@
 ```ts
 
 // @public
+export interface ColumnQueryRequest {
+    maxBytes?: number;
+    maxRows?: number;
+    readConcern?: ReadConcern;
+}
+
+// @public
 export interface ConflictContext {
     localChange: ReplicationChange | null;
     localHlc: string | null;
@@ -51,6 +58,7 @@ export class HttpTransport implements Transport {
     load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>;
     query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>;
     queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse>;
+    queryWithColumns(sql: string, params?: Params, request?: ColumnQueryRequest): Promise<QueryColumnsResponse>;
     subscribe(_table: string, _filter: Record<string, unknown> | undefined, _callback: (event: ChangeEvent) => void): Promise<RemoteSubscription>;
     transaction(statements: Array<{
         sql: string;
@@ -106,6 +114,7 @@ export class RemoteDatabase {
     on(table: string): RemoteSubscriptionBuilder;
     query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
     query<Args, Row>(operation: OperationRef<Args, Row>, args: Args, options?: QueryOptions): Promise<Row[]>;
+    queryWithColumns(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult>;
     transaction(statements: Array<{
         sql: string;
         params?: Params;
@@ -313,6 +322,7 @@ export interface Transport {
     load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>;
     query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>;
     queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse>;
+    queryWithColumns?(sql: string, params?: Params, request?: ColumnQueryRequest): Promise<QueryColumnsResponse>;
     subscribe(table: string, filter: Record<string, unknown> | undefined, callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription>;
     transaction(statements: Array<{
         sql: string;
@@ -342,6 +352,7 @@ export class WebSocketTransport implements Transport {
     load(sql: string, paramsBatch: Params[], durability?: BulkLoadDurability, checkpoint?: boolean): Promise<LoadResponse>;
     query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>;
     queryNamed(name: string, args?: Record<string, unknown>, readConcern?: ReadConcern): Promise<QueryResponse>;
+    queryWithColumns(sql: string, params?: Params, request?: ColumnQueryRequest): Promise<QueryColumnsResponse>;
     subscribe(table: string, filter: Record<string, unknown> | undefined, callback: (event: ChangeEvent) => void, options?: SubscribeOptions): Promise<RemoteSubscription>;
     transaction(statements: Array<{
         sql: string;

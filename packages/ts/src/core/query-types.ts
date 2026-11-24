@@ -1,3 +1,5 @@
+import type { ColumnDetail, ReadTruncation } from './driver/column-reads.js'
+
 /** The values to bind to a statement, as an object for named parameters or an array for positional ones.
  * @public
  */
@@ -39,6 +41,41 @@ export interface QueryOptions {
   writeConcern?: WriteConcern
   /** How current the data must be for a read; in coordinator mode, the replication engine enforces it and applies 'majority' when you omit it, while in static mode the engine ignores the setting. */
   readConcern?: ReadConcern
+}
+
+/**
+ * The settings of {@link DatabaseColumnQueries.queryWithColumns}: the read concern of {@link QueryOptions}, and the two limits that
+ * stop the read before it holds more rows or bytes than the caller can take.
+ *
+ * @public
+ */
+export interface QueryWithColumnsOptions extends QueryOptions {
+  /**
+   * The most rows that the call returns, as a non-negative safe integer. Sirannon reads one row past it to learn
+   * whether more rows exist, and sets `truncated` to `'rows'` when they do.
+   */
+  maxRows?: number
+  /**
+   * The most bytes of values that the call returns, as a non-negative safe integer. Every value counts 8 bytes, a TEXT
+   * value also counts the bytes of its UTF-8 encoding, and a BLOB also counts its length. Sirannon stops before the
+   * first row that would take the total past this limit, and sets `truncated` to `'bytes'`.
+   */
+  maxBytes?: number
+}
+
+/**
+ * What {@link DatabaseColumnQueries.queryWithColumns} returns: the details of each result column, and each row as an array of its
+ * values in column order, so that two columns of the same name each keep their value.
+ *
+ * @public
+ */
+export interface QueryWithColumnsResult {
+  /** One entry for each result column, in the order that the statement returns them. */
+  columns: ColumnDetail[]
+  /** One array for each row, holding the row's values in the order of `columns`. */
+  rows: unknown[][]
+  /** `'rows'` or `'bytes'` when that limit stopped the read before its last row, and `null` when it returned every row. */
+  truncated: ReadTruncation | null
 }
 
 /** The result of a write statement such as INSERT, UPDATE, or DELETE.

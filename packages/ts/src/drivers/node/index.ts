@@ -10,6 +10,7 @@ import { ExtensionError } from '../../core/errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
+import { nodeReportsColumnDetails, readWithColumns } from './column-reads.js'
 import { copyDatabaseWithNodeSqlite } from './copy.js'
 import { prepareStatement } from './statement-text.js'
 
@@ -57,6 +58,7 @@ function carriesSteppedBackupCall(): boolean {
  */
 export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
   const workerEntry = { specifier: import.meta.url, exportName: 'nodeSqlite', config: driverOptions }
+  const columnDetails = nodeReportsColumnDetails()
   return defineDriver({
     capabilities: {
       multipleConnections: true,
@@ -64,6 +66,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
       steppedCopy: carriesSteppedBackupCall(),
       rowCounts: false,
       encryption: false,
+      columnDetails,
     },
     worker: workerEntry,
     startWriterHost: async (path, options, hostOptions) => {
@@ -102,7 +105,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
 
         async prepare(sql: string): Promise<SQLiteStatement> {
           const stmt = prepareStatement(db, sql)
-          return {
+          const statement: SQLiteStatement = {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
               return narrowRowsIntegers(stmt.all(...(bindableParams(params) as Parameters<typeof stmt.all>)) as T[])
             },
@@ -125,6 +128,9 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
               }
             },
           }
+          if (columnDetails)
+            statement.allWithColumns = async (limits, ...params) => readWithColumns(stmt, limits, params)
+          return statement
         },
 
         async runBatch(sql: string, paramsBatch: readonly unknown[][]) {

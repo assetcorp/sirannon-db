@@ -124,6 +124,10 @@ describe('writes sent to a replica', () => {
     const reservedBatch = await replica.engine
       .executeBatch('DELETE FROM _sirannon_peer_state WHERE peer_node_id = ?', [['x']])
       .catch((error: unknown) => error)
+    const quoted = await replica.engine.execute("DELETE FROM '_sirannon_changes'").catch((error: unknown) => error)
+    const quotedBatch = await replica.engine
+      .executeBatch("UPDATE main.'_sirannon_peer_state' SET peer_node_id = ? WHERE 0", [['x']])
+      .catch((error: unknown) => error)
     const pragma = await replica.engine.execute('PRAGMA user_version = 7').catch((error: unknown) => error)
     const attach = await replica.engine.execute("ATTACH DATABASE ':memory:' AS spare").catch((error: unknown) => error)
     const hooked = await replica.engine
@@ -133,6 +137,8 @@ describe('writes sent to a replica', () => {
     expect(constraint).toMatchObject({ code: 'QUERY_ERROR' })
     expect(reserved).toMatchObject({ code: 'FORBIDDEN_SQL' })
     expect(reservedBatch).toMatchObject({ code: 'FORBIDDEN_SQL' })
+    expect(quoted).toMatchObject({ code: 'FORBIDDEN_SQL' })
+    expect(quotedBatch).toMatchObject({ code: 'FORBIDDEN_SQL' })
     expect(pragma).toMatchObject({ code: 'REPLICATION_ERROR' })
     expect(attach).toMatchObject({ code: 'REPLICATION_ERROR' })
     expect(hooked).toMatchObject({ code: 'STALE_PRIMARY', message: PAYROLL_REFUSAL })

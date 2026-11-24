@@ -184,6 +184,37 @@ describe.skipIf(!webLocksPresent)('values through the wa-sqlite driver', () => {
     ])
   })
 
+  it('returns column names and rows in column order, stops at its limits, and reads one statement', async () => {
+    const db = await openCells()
+    await db.execute(INSERT_CELL, [1, LARGEST_INT64])
+    await db.execute(INSERT_CELL, [2, MULTILINGUAL_TEXT])
+    await db.execute(INSERT_CELL, [3, EVERY_BYTE])
+    const name = (column: string) => ({ name: column, declaredType: null, table: null, column: null, database: null })
+
+    const read = await db.queryWithColumns(
+      'SELECT a.id, b.id, a.value, a.id + 0 AS "1" FROM cells a JOIN cells b ON a.id = b.id ORDER BY a.id',
+    )
+    const textBytes = 8 + Buffer.byteLength(MULTILINGUAL_TEXT, 'utf8')
+    const limited = await db.queryWithColumns('SELECT value FROM cells ORDER BY id', [], { maxBytes: 8 + textBytes })
+    const counted = await db.queryWithColumns(
+      'WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT i FROM n',
+      [],
+      { maxRows: 3 },
+    )
+    const first = await db.queryWithColumns('SELECT id FROM cells WHERE id = 1; SELECT id, value, id FROM cells')
+
+    expect(read.columns).toEqual([name('id'), name('id'), name('value'), name('1')])
+    expect(read.rows.map(row => row.map(value => (value instanceof Uint8Array ? bytesHex(value) : value)))).toEqual([
+      [1, 1, LARGEST_INT64, 1],
+      [2, 2, MULTILINGUAL_TEXT, 2],
+      [3, 3, bytesHex(EVERY_BYTE), 3],
+    ])
+    expect(limited).toMatchObject({ rows: [[LARGEST_INT64], [MULTILINGUAL_TEXT]], truncated: 'bytes' })
+    expect(counted).toMatchObject({ rows: [[1], [2], [3]], truncated: 'rows' })
+    expect(first).toEqual({ columns: [name('id')], rows: [[1]], truncated: null })
+    await expect(db.queryWithColumns("SELECT * FROM '_sirannon_meta'")).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+  })
+
   it('binds named parameters in every prefix form, in a statement, a batch, and a transaction', async () => {
     const db = await openCells()
     await db.execute('INSERT INTO cells (id, value) VALUES (:id, :value)', { id: 1, value: 'colon' })

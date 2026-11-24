@@ -10,9 +10,60 @@ interface Statement {
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint }
   all(...params: unknown[]): unknown[]
   get(...params: unknown[]): unknown
+  iterate(...params: unknown[]): IterableIterator<unknown[]>
+  columns(): { name: string }[]
+  raw(toggle: boolean): Statement
 }
 
+export const STOCK_BETTER_SQLITE3_BUILD = 'the better-sqlite3 build without SQLCipher'
+
 export const expoMoveSteps: { afterDelete: (() => void) | null } = { afterDelete: null }
+
+function bindingOption(binding: string): { nativeBinding?: string } {
+  return binding === STOCK_BETTER_SQLITE3_BUILD ? {} : { nativeBinding: binding }
+}
+
+function preparedStatementOf(stmt: Statement) {
+  let finalized = false
+  const live = () => {
+    if (finalized) throw new Error('The statement is finalized')
+    return stmt
+  }
+  return {
+    async getColumnNamesAsync() {
+      return live().reader
+        ? live()
+            .columns()
+            .map(column => column.name)
+        : []
+    },
+    async executeForRawResultAsync(params?: unknown) {
+      const args = bindArgs(params)
+      if (!live().reader) {
+        live().run(...args)
+        return { getAllAsync: async () => [], async *[Symbol.asyncIterator]() {} }
+      }
+      return {
+        async getAllAsync() {
+          return [
+            ...live()
+              .raw(true)
+              .iterate(...args),
+          ]
+        },
+        async *[Symbol.asyncIterator]() {
+          for (const row of live()
+            .raw(true)
+            .iterate(...args))
+            yield row
+        },
+      }
+    },
+    async finalizeAsync() {
+      finalized = true
+    },
+  }
+}
 
 function bindArgs(params: unknown): unknown[] {
   if (params === undefined) return []
@@ -50,11 +101,14 @@ function handleOf(db: StockDatabase.Database) {
       const info = statement(sql).run(...bindArgs(params))
       return { changes: info.changes, lastInsertRowId: Number(info.lastInsertRowid) }
     },
+    async prepareAsync(sql: string) {
+      return preparedStatementOf(statement(sql))
+    },
     async withExclusiveTransactionAsync(task: (tx: unknown) => Promise<void>) {
       const BetterSqlite = require('better-sqlite3') as typeof StockDatabase
       const binding = expoSqlcipherBuild.binding
       if (binding === null) throw new Error('The SQLCipher binding is missing')
-      const transaction = new BetterSqlite(db.name, { nativeBinding: binding })
+      const transaction = new BetterSqlite(db.name, bindingOption(binding))
       transaction.unsafeMode(true)
       try {
         transaction.exec('BEGIN')
@@ -87,7 +141,7 @@ export function expoSqliteModule() {
       if (binding === null) throw new Error('Set expoSqlcipherBuild.binding to a built expo-sqlite SQLCipher first')
       const path =
         name === ':memory:' ? name : `${expoSqlcipherBuild.directory.replace(/\/*$/, '')}/${name.replace(/^\/+/, '')}`
-      const db = new BetterSqlite(path, { readonly: options?.readOnly === true, nativeBinding: binding })
+      const db = new BetterSqlite(path, { readonly: options?.readOnly === true, ...bindingOption(binding) })
       db.unsafeMode(true)
       return handleOf(db)
     },

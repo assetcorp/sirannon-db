@@ -55,6 +55,7 @@ export type StatementEntryPoint = [label: string, call: (db: Database, sql: stri
 export const STATEMENT_ENTRY_POINTS: StatementEntryPoint[] = [
   ['query', (db, sql) => db.query(sql)],
   ['queryOne', (db, sql) => db.queryOne(sql)],
+  ['queryWithColumns', (db, sql) => db.queryWithColumns(sql, [], { maxRows: 10, maxBytes: 4096 })],
   ['execute', (db, sql) => db.execute(sql)],
   ['executeBatch', (db, sql) => db.executeBatch(sql, [[]])],
   ['executeTransaction', (db, sql) => db.executeTransaction([{ sql: 'DELETE FROM notes WHERE id < 0' }, { sql }])],

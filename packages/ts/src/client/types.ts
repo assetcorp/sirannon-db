@@ -5,9 +5,11 @@ import type {
   BatchResponse,
   ExecuteResponse,
   LoadResponse,
+  QueryColumnsResponse,
   QueryResponse,
   TransactionResponse,
 } from '../server/protocol.js'
+import type { ColumnQueryRequest } from './column-answers.js'
 
 /** Optional behaviours for a CDC subscription.
  * @public
@@ -100,6 +102,12 @@ export interface Transport {
   readonly carriesReadConcern?: boolean
   /** Sends a read and returns its rows. */
   query(sql: string, params?: Params, readConcern?: ReadConcern): Promise<QueryResponse>
+  /**
+   * Sends a read that asks for each column's details with each row as an array, under `maxRows` and `maxBytes`, and
+   * returns the answer with each value decoded. A transport without this method fails
+   * {@link RemoteDatabase.queryWithColumns} with `TRANSPORT_ERROR`.
+   */
+  queryWithColumns?(sql: string, params?: Params, request?: ColumnQueryRequest): Promise<QueryColumnsResponse>
   /** Sends one write. */
   execute(sql: string, params?: Params): Promise<ExecuteResponse>
   /** Sends several statements that the server executes in one transaction. */

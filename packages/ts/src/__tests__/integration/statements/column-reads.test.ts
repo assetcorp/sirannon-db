@@ -219,6 +219,28 @@ describe.each(DRIVER_CASES)('queryWithColumns on $label', driverCase => {
     expect([counted.rows.length, counted.truncated, counted.rows.at(-1)?.[0]]).toEqual([1000, 'rows', 1000])
   })
 
+  it('runs a cached RETURNING write at most once across schema changes, whether or not the database has readers', async () => {
+    const { db, path } = await openItems(driverCase, 'returning')
+    if (!supported()) return
+    const insert = "INSERT INTO items (id, label) VALUES ((SELECT max(id) + 1 FROM items), 'returned') RETURNING id"
+    const stored = (): number => Number(columnRaw(path, 'SELECT count(*) FROM items')[0])
+    const before = stored()
+    const outcomes: unknown[] = []
+    const reads: Array<{ maxRows?: number } | undefined> = [undefined, undefined, undefined, { maxRows: 5 }]
+    for (const [index, limits] of reads.entries()) {
+      if (index > 0) await db.execute(`ALTER TABLE items ADD COLUMN returned${index} TEXT`)
+      outcomes.push(
+        await db.queryWithColumns(insert, [], limits).then(
+          read => read.rows.length,
+          (error: { code?: string }) => error.code,
+        ),
+      )
+    }
+
+    expect(stored() - before, JSON.stringify(outcomes)).toBe(outcomes.filter(outcome => outcome === 1).length)
+    for (const outcome of outcomes) expect([1, 'QUERY_ERROR', 'READ_ONLY']).toContain(outcome)
+  })
+
   it('refuses a limit that is not a non-negative safe integer before SQLite reads anything', async () => {
     const { db } = await openItems(driverCase, 'refusals')
     let started = 0

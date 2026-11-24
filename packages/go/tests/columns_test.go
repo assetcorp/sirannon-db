@@ -175,6 +175,11 @@ func TestQueryWithColumnsRefusesBadLimitsAndReservedTables(t *testing.T) {
 
 func TestQueryWithColumnsRefusesAnAnswerWhoseRowsDoNotMatchItsColumns(t *testing.T) {
 	bodies := []string{
+		`{"columns":[],"rows":[]}`,
+		`{"columns":[null],"rows":[[1]],"truncated":null}`,
+		`{"columns":[{}],"rows":[[1]],"truncated":null}`,
+		`{"columns":[{"name":null,"declaredType":null,"table":null,"column":null,"database":null}],"rows":[[1]],"truncated":null}`,
+		`{"columns":[{"name":"a","table":null,"column":null,"database":null}],"rows":[[1]],"truncated":null}`,
 		`{"columns":[{"name":"a","declaredType":null,"table":null,"column":null,"database":null}],"rows":[[1,2]],"truncated":null}`,
 		`{"columns":[{"name":"a","declaredType":null,"table":null,"column":null,"database":null}],"rows":[null],"truncated":null}`,
 		`{"columns":[{"name":"a","declaredType":null,"table":null,"column":null,"database":null}],"rows":[[1]],"truncated":"later"}`,

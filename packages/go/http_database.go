@@ -2,6 +2,7 @@ package sirannon
 
 import (
 	"context"
+	"encoding/json"
 )
 
 type httpDatabase struct {
@@ -45,11 +46,11 @@ func (d *httpDatabase) queryColumns(ctx context.Context, call columnsCall) (Quer
 	if err != nil {
 		return QueryColumnsResponse{}, err
 	}
-	var answer QueryColumnsResponse
+	var answer json.RawMessage
 	if err := d.transport.postJSON(ctx, d.prefix+"/query", body, &answer); err != nil {
 		return QueryColumnsResponse{}, err
 	}
-	return checkColumnsAnswer(answer)
+	return columnsAnswerFrom(answer)
 }
 
 func (d *httpDatabase) execute(ctx context.Context, call statementCall) ([]ExecuteResult, error) {

@@ -120,6 +120,9 @@ describe("statements that reach Sirannon's own tables, the SQLite catalogue, or 
       "DELETE FROM '_sirannon_changes'",
       "DROP TABLE '_sirannon_changes'",
       "PRAGMA table_info('_sirannon_changes')",
+      "SELECT * FROM ('_sirannon_changes')",
+      "SELECT * FROM notes JOIN ('_sirannon_meta')",
+      "SELECT * FROM ((notes, ('_sirannon_meta')))",
     ]
     const changesBefore = countSqlite(path, '_sirannon_changes')
     const schemaBefore = schemaRows()

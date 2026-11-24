@@ -256,6 +256,7 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     const { db, path } = await openShop()
     await db.execute("INSERT INTO notes (body) VALUES ('_sirannon_meta'), ('_sirannon_changes'), ('plain')")
     const before = schemaSnapshot(path)
+    const notesBefore = columnRaw(path, 'SELECT body FROM notes ORDER BY id')
 
     for (const sql of QUOTED_INTERNAL_TABLES) {
       const reached = tablesSqliteReaches(path, sql)
@@ -269,6 +270,8 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
       }
       await expect(db.live(sql), `live: ${sql}`).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
     }
+    expect(columnRaw(path, 'SELECT body FROM notes ORDER BY id')).toEqual(notesBefore)
+    expect(schemaSnapshot(path)).toEqual(before)
 
     for (const sql of QUOTED_INTERNAL_VALUES) {
       const reached = tablesSqliteReaches(path, sql)
@@ -309,6 +312,17 @@ const QUOTED_INTERNAL_TABLES = [
   "CREATE TABLE copied AS SELECT * FROM '_sirannon_changes'",
   "ANALYZE '_sirannon_meta'",
   "PRAGMA main.index_list('_sirannon_meta')",
+  "SELECT * FROM ('_sirannon_meta')",
+  "SELECT * FROM ( '_sirannon_meta' )",
+  "SELECT * FROM orders JOIN ('_sirannon_meta')",
+  "SELECT * FROM orders, ('_sirannon_meta')",
+  "SELECT * FROM (orders, '_sirannon_meta')",
+  "SELECT * FROM ((orders, ('_sirannon_meta')))",
+  "SELECT * FROM (((('_sirannon_changes'))))",
+  "SELECT * FROM (SELECT 1) AS one, ('_sirannon_meta')",
+  "SELECT * FROM orders LEFT JOIN (orders AS o JOIN ('_sirannon_meta')) ON 1",
+  "INSERT INTO notes (body) SELECT key FROM (orders, ('_sirannon_meta'))",
+  "UPDATE notes SET body = 'x' FROM (('_sirannon_meta'))",
 ]
 
 const QUOTED_INTERNAL_VALUES = [
@@ -323,6 +337,12 @@ const QUOTED_INTERNAL_VALUES = [
   "SELECT coalesce(NULL, '_sirannon_meta') || '_sirannon_changes' AS joined",
   "SELECT json_extract('{\"_sirannon_meta\":1}', '$._sirannon_meta') AS found",
   "SELECT orders.item FROM orders JOIN notes ON notes.body <> '_sirannon_meta' WHERE orders.id = 1 LIMIT 1",
+  "SELECT body FROM notes WHERE body IN ('_sirannon_meta') ORDER BY body",
+  "SELECT * FROM (SELECT '_sirannon_meta' AS name)",
+  "SELECT * FROM (VALUES ('_sirannon_meta'))",
+  "SELECT * FROM (WITH listed AS (SELECT '_sirannon_changes' AS name) SELECT name FROM listed)",
+  "SELECT orders.item FROM orders JOIN notes ON (notes.body = '_sirannon_meta') ORDER BY orders.id",
+  'SELECT value FROM json_each((\'["_sirannon_meta"]\'))',
 ]
 
 function tablesSqliteReaches(path: string, sql: string): string[] | undefined {

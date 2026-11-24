@@ -14,11 +14,13 @@ import { readWithColumns } from './column-reads.js'
 import { copyDatabaseWithBetterSqlite3 } from './copy.js'
 import {
   assertKeyFitsFile,
-  classifyDatabaseFile,
+  classifyDatabasePath,
   ENCRYPTION_FEATURE,
   type EncryptingDatabase,
+  explainRejectedKey,
   keyConnection,
   probeDatabaseFile,
+  readUnkeyedSchema,
 } from './encryption.js'
 import {
   countingStatement,
@@ -212,20 +214,22 @@ async function openDatabase(
   }
   const sqlite = await loadSirannonSqlite([first, ...rest], driverOptions?.sqliteBindingPath)
   const openConnection = () => new sqlite.Database(path, { readonly, nativeBinding: sqlite.bindingPath })
-  if (driverOptions?.encryption === true) {
-    const kind = await classifyDatabaseFile(path)
-    const settled =
-      kind === 'unknown' ? probeDatabaseFile(() => openConnection() as unknown as EncryptingDatabase) : kind
-    assertKeyFitsFile(path, settled, rawKey !== undefined)
+  const probe = () => probeDatabaseFile(() => openConnection() as unknown as EncryptingDatabase)
+  const pathKind = driverOptions?.encryption === true ? classifyDatabasePath(path) : null
+  if (pathKind === 'memory' || pathKind === 'unknown') {
+    assertKeyFitsFile(path, pathKind === 'unknown' ? probe() : pathKind, rawKey !== undefined)
   }
   const db = openConnection()
   const encrypting = driverOptions?.encryption === true ? (db as unknown as EncryptingDatabase) : null
   try {
     if (rawKey !== undefined && encrypting) keyConnection(encrypting, path, rawKey)
-    else db.pragma('temp_store = FILE')
+    else {
+      if (encrypting && pathKind === 'file') readUnkeyedSchema(encrypting, path)
+      db.pragma('temp_store = FILE')
+    }
   } catch (err) {
     db.close()
-    throw err
+    throw rawKey !== undefined && pathKind === 'file' ? explainRejectedKey(path, err, probe) : err
   }
   return { db, taker: driverOptions?.rowCounts === true ? new RowCountTaker() : null, encrypting }
 }

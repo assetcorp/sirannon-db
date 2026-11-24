@@ -694,6 +694,7 @@ export class DatabaseEncryption extends DatabaseBackups {
 
 // @public
 export interface DatabaseFileSystem {
+    exists(path: string): Promise<boolean>;
     readStart(path: string, length: number): Promise<Uint8Array | null>;
     remove(path: string): Promise<void>;
     rename(from: string, to: string): Promise<void>;

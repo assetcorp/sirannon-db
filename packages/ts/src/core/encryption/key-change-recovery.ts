@@ -27,12 +27,15 @@ function missingDatabaseFile(path: string): SirannonError {
 /**
  * Finishes the cleanup of a key change that stopped part way, following what its marker records.
  *
- * When the database file starts with the bytes in the marker, the new file replaced the original, and the open
- * deletes any new file left behind. When the database file is missing, the marker records that the replacement
- * began, and the new file starts with the marker's bytes, the open moves the new file into place. Any other missing
- * database file fails the open and leaves every file as it is. In every other case the original stands, and the open
- * deletes the new file. The open deletes the marker after each of these steps except the failure. A read-only open
- * changes no file and only learns which key the file needs. When the driver's file operations report
+ * A key change writes the new file before its marker, and deletes the marker before it deletes a new file that it
+ * leaves unused, so the new file is gone while the marker holds a record only once the rename has moved the new file
+ * into place. When the database file exists and the new file is gone, the new file replaced the original. When the
+ * database file exists and so does the new file, the original stands, and the open deletes the marker and then the
+ * new file. When the database file is missing, the marker records that the replacement began, and the new file
+ * starts with the marker's bytes, the open moves the new file into place and deletes the marker. Any other missing
+ * database file fails the open and leaves every file as it is. A read-only open changes no file and only learns which
+ * key the file needs. The open answers whether the database file exists from its metadata, so it closes no descriptor
+ * on a file that SQLite can hold open in this process. When the driver's file operations report
  * `ENCRYPTION_UNSUPPORTED`, the driver can run no key change, so the open finds none to finish.
  *
  * @param driver - The driver, whose file operations and connections the recovery uses.
@@ -50,20 +53,19 @@ export async function recoverInterruptedKeyChange(
 ): Promise<InterruptedKeyChange | null> {
   const files = driver.files
   if (files === undefined || path === ':memory:' || path === '' || path.startsWith('file:')) return null
-  let markerStart: Uint8Array | null
+  let markerFound: boolean
   try {
-    markerStart = await files.readStart(keyChangeMarkerPath(path), FILE_IDENTITY_BYTES)
+    markerFound = await files.exists(keyChangeMarkerPath(path))
   } catch (err) {
     if (err instanceof EncryptionError && err.code === 'ENCRYPTION_UNSUPPORTED') return null
     throw err
   }
-  if (markerStart === null) {
+  if (!markerFound) {
     if (!readOnly) await removeKeyChangeFile(files, path)
     return null
   }
   const marker = await readKeyChangeMarker(driver, path, readOnly)
-  const current = await files.readStart(path, FILE_IDENTITY_BYTES)
-  if (current === null) {
+  if (!(await files.exists(path))) {
     const newFile = await files.readStart(keyChangeFilePath(path), FILE_IDENTITY_BYTES)
     const movable = marker?.replacementBegun === true && newFile !== null && sameBytes(marker.identity, newFile)
     if (!movable) throw missingDatabaseFile(path)
@@ -73,10 +75,10 @@ export async function recoverInterruptedKeyChange(
     await removeKeyChangeMarker(files, path)
     return 'key-after-change'
   }
-  const replaced = marker !== null && current.length === FILE_IDENTITY_BYTES && sameBytes(marker.identity, current)
+  const replaced = marker !== null && !(await files.exists(keyChangeFilePath(path)))
   if (readOnly) return replaced ? 'key-after-change' : 'key-before-change'
-  await removeKeyChangeFile(files, path)
   await removeKeyChangeMarker(files, path)
+  await removeKeyChangeFile(files, path)
   return replaced ? 'key-after-change' : 'key-before-change'
 }
 

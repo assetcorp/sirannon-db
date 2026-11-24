@@ -68,6 +68,10 @@ function fileUri(directory: string, path: string): string {
  * @internal
  */
 export const expoDatabaseFiles: DatabaseFileSystem = {
+  async exists(path) {
+    const { fs, directory } = await loadModules()
+    return (await fs.getInfoAsync(fileUri(directory, path))).exists
+  },
   async readStart(path, length) {
     const { fs, directory } = await loadModules()
     const uri = fileUri(directory, path)

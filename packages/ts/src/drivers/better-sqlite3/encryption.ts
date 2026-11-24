@@ -1,11 +1,8 @@
 import { EncryptionError, keyRejected } from '../../core/encryption/errors.js'
-import { nodeDatabaseFiles } from '../node-files.js'
 import type { SirannonSqliteFeature } from './sirannon-sqlite.js'
 
 const AEGIS_CIPHER_NAME = 'aegis'
 const AEGIS_256_ALGORITHM_NAME = 'aegis-256'
-const SQLITE_HEADER = 'SQLite format 3\0'
-const SQLITE_HEADER_BYTES = SQLITE_HEADER.length
 
 /**
  * The encryption engine that the `encryption` option needs from Sirannon's SQLite build.
@@ -29,6 +26,13 @@ export const ENCRYPTION_FEATURE: SirannonSqliteFeature = {
 export type DatabaseFileKind = 'new' | 'plaintext' | 'encrypted' | 'memory' | 'unknown'
 
 /**
+ * What the driver can tell from a database path alone: an in-memory database, a URI, or a path to a file.
+ *
+ * @internal
+ */
+export type DatabasePathKind = 'memory' | 'unknown' | 'file'
+
+/**
  * A better-sqlite3 database from Sirannon's SQLite3 Multiple Ciphers build, with the calls that key it and capture
  * its changes.
  *
@@ -46,26 +50,25 @@ export interface EncryptingDatabase {
 }
 
 /**
- * Reads the start of a database file to tell a new file, a plaintext database, and an encrypted one apart.
+ * Tells an in-memory database, a URI, and a path to a file apart from the path alone, without opening the file. The
+ * connection that opens a file identifies its contents, because a descriptor that the driver opened and closed outside
+ * SQLite would release every lock that SQLite holds on that file in this process.
  *
  * @param path - The path that the driver opens.
- * @returns The kind of file at the path.
+ * @returns The kind of path.
  * @internal
  */
-export async function classifyDatabaseFile(path: string): Promise<DatabaseFileKind> {
+export function classifyDatabasePath(path: string): DatabasePathKind {
   if (path === '' || path === ':memory:') return 'memory'
   if (path.startsWith('file:')) return 'unknown'
-  const start = await nodeDatabaseFiles.readStart(path, SQLITE_HEADER_BYTES)
-  if (start === null || start.length === 0) return 'new'
-  if (start.length === SQLITE_HEADER_BYTES && String.fromCharCode(...start) === SQLITE_HEADER) return 'plaintext'
-  return 'encrypted'
+  return 'file'
 }
 
 /**
- * Checks a keyed open against the file that it opens, before the driver creates a connection.
+ * Checks whether an open, with or without a key, fits the kind of database at its path.
  *
  * @param path - The path that the driver opens.
- * @param kind - What {@link classifyDatabaseFile} found at the path.
+ * @param kind - What {@link classifyDatabasePath} or {@link probeDatabaseFile} found at the path.
  * @param keyed - `true` when the open carries a key.
  * @throws An `EncryptionError` with `ENCRYPTION_UNSUPPORTED` for an in-memory database with a key,
  * `DATABASE_NOT_ENCRYPTED` for a key on a plaintext file, and `ENCRYPTION_KEY_MISSING` for an encrypted file without
@@ -98,7 +101,8 @@ function sqliteCode(err: unknown): string | undefined {
 
 /**
  * Opens a separate connection without a key, reads the schema, and closes it, to tell a new file, a plaintext
- * database, an encrypted one, and an in-memory one apart at a path that the driver cannot read as a plain file.
+ * database, an encrypted one, and an in-memory one apart. SQLite defers closing the connection's descriptor while
+ * another connection in this process holds a lock on the file, so the probe leaves those locks in place.
  *
  * @param open - Opens a connection to the path without a key, with the flags of the open that follows.
  * @returns The kind of database that the connection found.
@@ -125,6 +129,50 @@ export function probeDatabaseFile(open: () => EncryptingDatabase): DatabaseFileK
   } finally {
     probe.close()
   }
+}
+
+/**
+ * Reads the schema on a connection that opened without a key, before any other statement, so that an encrypted file
+ * fails at the open.
+ *
+ * @param db - A connection without a key on which no statement has run.
+ * @param path - The path of the database, which the error names.
+ * @throws An `EncryptionError` with `ENCRYPTION_KEY_MISSING` when SQLite reads the file as not a database.
+ * @internal
+ */
+export function readUnkeyedSchema(db: EncryptingDatabase, path: string): void {
+  try {
+    db.prepare('SELECT count(*) FROM sqlite_schema').get()
+  } catch (err) {
+    if (sqliteCode(err) === 'SQLITE_NOTADB') assertKeyFitsFile(path, 'encrypted', false)
+    throw err
+  }
+}
+
+/**
+ * Returns the error for a keyed open that failed, replacing a rejected key with `DATABASE_NOT_ENCRYPTED` when a
+ * connection without a key reads the file as a plaintext database.
+ *
+ * @param path - The path of the database, which the error names.
+ * @param err - The error that the keyed open raised.
+ * @param probe - Identifies the file through a connection without a key, as {@link probeDatabaseFile} does.
+ * @returns The error to raise.
+ * @internal
+ */
+export function explainRejectedKey(path: string, err: unknown, probe: () => DatabaseFileKind): unknown {
+  if (!(err instanceof EncryptionError) || err.code !== 'ENCRYPTION_KEY_REJECTED') return err
+  let kind: DatabaseFileKind
+  try {
+    kind = probe()
+  } catch {
+    return err
+  }
+  try {
+    assertKeyFitsFile(path, kind, true)
+  } catch (refusal) {
+    return refusal
+  }
+  return err
 }
 
 function readSchema(db: EncryptingDatabase, path: string): void {

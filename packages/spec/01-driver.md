@@ -49,7 +49,7 @@ DriverCapabilities {
 | `steppedCopy` | The engine can copy an open database through SQLite's stepped backup interface; a driver reporting `true` must return connections that expose `copyDatabase`. |
 | `rowCounts` | A driver reporting `true` must expose the counted statement calls, set `rowsRead` and `rowsWritten` by the rules in [Row Counts](02-core.md#row-counts) on every `RunResult`, `BatchSummary`, and statement error, and fail `open` with `ROW_COUNTS_UNSUPPORTED` when its engine has no row counters. |
 | `encryption` | The engine encrypts every page of the database file and its log under a 32-byte key. A driver reporting `true` must accept `OpenOptions.encryption`, and a driver reporting `false` must fail an open that carries a key with `ENCRYPTION_UNSUPPORTED`. |
-| `columnDetails` | The engine reports the name of each result column of a statement. A driver reporting `true` must return statements that expose `allWithColumns`. |
+| `columnDetails` | The engine reports at least the name of each result column of a statement. A driver reporting `true` must return statements that expose `allWithColumns`. |
 
 ### OpenOptions
 
@@ -175,7 +175,7 @@ Parameters are passed as trailing arguments, not a single list.
 - **run** runs the statement for its side effects and returns a `RunResult`.
 - **allRaw** behaves like `all` but skips safe-range bigint narrowing, leaving every integer as a bigint. A driver may omit it; callers then fall back to `all`.
 - **allCounted**, **getCounted**, and **allRawCounted** must return the value of `all`, `get`, or `allRaw` together with the row counts of that call alone; a driver must expose `allRawCounted` whenever it exposes `allRaw`.
-- **allWithColumns** must return one `ColumnDetail` for each result column in order, each row as a list of its values in that order, and `truncated`, and must apply `limits` as [Column Reads](02-core.md#column-reads) defines. It must set a detail to null when the engine does not report it, and narrow integers as `all` does unless `rawIntegers` is `true`. A driver reporting `rowCounts` must set `rowsRead` and `rowsWritten` for the call. A driver that cannot apply `limits` to a result whose column names repeat must fail that call with `COLUMN_DETAILS_UNSUPPORTED`.
+- **allWithColumns** must return one `ColumnDetail` for each result column in result order, and each row as a list of its values in that order. It must apply `limits` and set `truncated` as [Column Reads](02-core.md#column-reads) defines. It must set to null each detail that the engine leaves unreported, and it must narrow integers as `all` does unless `rawIntegers` is `true`. A driver reporting `rowCounts` must set `rowsRead` and `rowsWritten` for the call. A driver whose engine steps through rows only as objects keyed by column name must fail with `COLUMN_DETAILS_UNSUPPORTED` a call that sets a limit on a result whose column names repeat.
 
 ---
 

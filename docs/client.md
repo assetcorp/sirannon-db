@@ -32,7 +32,7 @@ The client reads `GET /capabilities` once per server and caches the answer. When
 
 ## Column details and capped reads
 
-`queryWithColumns` returns each result column's details with each row as an array in column order, so a join that selects `a.id` and `b.id` keeps both values. Set `maxRows` or `maxBytes` when the statement comes from someone else, such as a person typing SQL into a console, so that one read can't return more than you're prepared to hold:
+`queryWithColumns` returns the details of every result column, together with each row as an array of values in column order, so when a join selects both `a.id` and `b.id`, the row keeps both values. Set `maxRows` or `maxBytes` when someone else writes the statement, such as a person who types SQL into a console, so that one read returns no more than you're prepared to hold in memory:
 
 ```ts
 const { columns, rows, truncated } = await db.queryWithColumns(
@@ -43,7 +43,7 @@ const { columns, rows, truncated } = await db.queryWithColumns(
 if (truncated !== null) console.warn(`The read stopped at its ${truncated === 'rows' ? 'row' : 'byte'} limit`)
 ```
 
-Each entry of `columns` holds `name`, `declaredType`, `table`, `column`, and `database`, with `null` for a detail that the server's driver doesn't report. The client refuses a limit that isn't a whole number from 0 to 2^53-1 with `INVALID_ARGUMENT` before it sends anything. Through a `TopologyAwareClient`, the read goes where its `readConcern` and `readPreference` send every other read.
+Each entry of `columns` has `name`, `declaredType`, `table`, `column`, and `database`, and the server sets a field to `null` when the column comes from an expression or when its driver can't report that field, as the [core guide](core.md#column-details-and-capped-reads) explains. Set each limit to a whole number from 0 to 2^53-1, because the client fails any other value with `INVALID_ARGUMENT` before it sends the request. A `TopologyAwareClient` routes the read in the same way that it routes every other read.
 
 ## Transactions and bulk writes
 

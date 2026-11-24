@@ -27,8 +27,8 @@ interface StatementWithColumns {
 
 /**
  * Returns whether this Node.js release's `node:sqlite` reports each column's details and returns rows as arrays,
- * which needs both `StatementSync.columns` and `StatementSync.setReturnArrays`. Node.js 24 has both, and so does Node.js
- * 22.23.5, while earlier Node.js 22 releases lack at least one of them.
+ * which needs both `StatementSync.columns` and `StatementSync.setReturnArrays`. Node.js added both in 22.16.0, so every
+ * release from 22.16.0 has them.
  *
  * @returns `true` when both calls exist.
  * @internal

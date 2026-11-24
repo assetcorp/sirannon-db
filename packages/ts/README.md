@@ -143,7 +143,7 @@ const balance = await db.transaction(async tx => {
 
 Group statements into a transaction through `transaction()` or `executeTransaction()`. Every call shares Sirannon's connections, so `query` and `execute` refuse `BEGIN`, `COMMIT`, `END`, `ROLLBACK`, `SAVEPOINT`, and `RELEASE` with `FORBIDDEN_SQL`, because a transaction opened that way would take in the next caller's writes. They refuse a `CREATE` or `DROP` of a temporary table, view, index, or trigger for the same reason, because the object would stay on the connection and hide a table of the same name from later callers.
 
-`queryWithColumns` returns each column's name, declared type, and source table with each row as an array in column order, so two columns that share a name keep separate values. Its `maxRows` and `maxBytes` options stop a read at a row count or at a size, which suits a statement that someone else wrote:
+`queryWithColumns` returns the name, declared type, and source table of every result column, together with each row as an array in column order, so two columns that share a name both keep their values. When someone else writes the statement, set its `maxRows` or `maxBytes` option, and Sirannon stops the read at that number of rows or at that size in bytes:
 
 ```ts
 const { columns, rows, truncated } = await db.queryWithColumns('SELECT * FROM orders', [], { maxRows: 500 })

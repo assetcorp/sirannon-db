@@ -5,11 +5,16 @@ import type {
   BulkLoadResult,
   Params,
   QueryOptions,
+  QueryWithColumnsOptions,
+  QueryWithColumnsResult,
   ReadConcern,
   WriteConcern,
 } from '../core/types.js'
 import type { CheckpointResponse } from '../server/checkpoint-protocol.js'
 import type { ExecuteResponse } from '../server/protocol.js'
+import { checkpointResponseFrom } from './checkpoint-answer.js'
+import { COLUMN_READS_UNSUPPORTED_MESSAGE, columnQueryRequest } from './column-answers.js'
+import type { LoadAllOptions } from './load-all-options.js'
 import { RemoteLiveQuery } from './remote-live-query.js'
 import type { ServerCapabilityCheck } from './server-capabilities.js'
 import { RemoteSubscriptionBuilderImpl } from './subscription.js'
@@ -21,47 +26,12 @@ const DEFAULT_LOAD_BATCH_SIZE = 1000
 export const READ_CONCERN_UNSUPPORTED_MESSAGE =
   'This transport does not carry a per-read concern to the server. Use the HTTP transport for a per-call readConcern, or set the client-wide readConcern that topology routing applies when choosing a node.'
 
-/** Options for {@link RemoteDatabase.loadAll}.
- * @public
- */
-export interface LoadAllOptions {
-  /**
-   * The number of rows in each batch that the client sends to the server. Each
-   * batch is one request that must fit under the server's `maxBodyBytes`, so for
-   * wide rows, raise that limit or lower this value. Defaults to 1000.
-   */
-  batchSize?: number
-  /** The writer's durability level during the load. Defaults to 'off'. */
-  durability?: BulkLoadDurability
-}
+export type { LoadAllOptions } from './load-all-options.js'
 
 const SQL_ACCEPTED: Promise<void> = Promise.resolve()
 
 function closedDatabaseError(): RemoteError {
   return new RemoteError('TRANSPORT_ERROR', 'Transport is closed')
-}
-
-function checkpointResponseFrom(answer: unknown): CheckpointResponse {
-  const body = (answer ?? {}) as Partial<Record<keyof CheckpointResponse, unknown>>
-  const { busy, framesInLog, framesCheckpointed, emptied } = body
-  if (
-    typeof busy !== 'boolean' ||
-    typeof emptied !== 'boolean' ||
-    !isFrameCount(framesInLog) ||
-    !isFrameCount(framesCheckpointed) ||
-    framesCheckpointed > framesInLog ||
-    (emptied && (busy || framesInLog !== 0))
-  ) {
-    throw new RemoteError(
-      'INVALID_RESPONSE',
-      'The server answered the checkpoint with a body that holds no checkpoint result',
-    )
-  }
-  return { busy, framesInLog, framesCheckpointed, emptied }
-}
-
-function isFrameCount(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 }
 
 function isAsyncIterable<T>(value: Iterable<T> | AsyncIterable<T>): value is AsyncIterable<T> {
@@ -124,6 +94,33 @@ export class RemoteDatabase {
     await this.assertSqlAccepted()
     const response = await this.transport.query(operation, params, options?.readConcern)
     return response.rows
+  }
+
+  /**
+   * Sends a read to the server and returns the name, declared type, and source of each result column, with each row
+   * as an array of its values in column order.
+   *
+   * Two columns of the same name each keep their value. The server reads one row at a time and stops after
+   * `maxRows` rows, or before the first row that would take the values past `maxBytes`, and `truncated` names the
+   * limit that stopped it.
+   *
+   * @param sql - The statement to execute, which the client sends only to a server that accepts SQL.
+   * @param params - The values to bind to the statement, by name or by position.
+   * @param options - The read concern, and the `maxRows` and `maxBytes` limits.
+   * @returns The columns, the rows, and the limit that stopped the read, or `null` when the answer holds every row.
+   * @throws A `RemoteError` with `INVALID_ARGUMENT` for a limit that is not a non-negative safe integer, with
+   * `TRANSPORT_ERROR` on a transport that sends no columns read, and with `INVALID_RESPONSE` for a malformed answer.
+   */
+  async queryWithColumns(
+    sql: string,
+    params?: Params,
+    options?: QueryWithColumnsOptions,
+  ): Promise<QueryWithColumnsResult> {
+    this.assertReadConcernReaches(options?.readConcern)
+    const request = columnQueryRequest(options)
+    await this.assertSqlAccepted()
+    if (!this.transport.queryWithColumns) throw new RemoteError('TRANSPORT_ERROR', COLUMN_READS_UNSUPPORTED_MESSAGE)
+    return this.transport.queryWithColumns(sql, params, request)
   }
 
   private assertSqlAccepted(): Promise<void> {

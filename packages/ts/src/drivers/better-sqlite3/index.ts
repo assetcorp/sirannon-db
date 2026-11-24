@@ -10,6 +10,7 @@ import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 import { nodeDatabaseFiles } from '../node-files.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
+import { readWithColumns } from './column-reads.js'
 import { copyDatabaseWithBetterSqlite3 } from './copy.js'
 import {
   assertKeyFitsFile,
@@ -88,6 +89,9 @@ function plainStatement(stmt: import('better-sqlite3').Statement): SQLiteStateme
     },
     async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
       return narrowRowIntegers(stmt.get(...bindableParams(params)) as T | undefined)
+    },
+    async allWithColumns(limits, ...params) {
+      return readWithColumns(stmt, limits, params)
     },
     async run(...params: unknown[]) {
       const result = stmt.run(...bindableParams(params))
@@ -239,7 +243,14 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
   const rowCounts = driverOptions?.rowCounts === true
   const encryption = driverOptions?.encryption === true
   return defineDriver({
-    capabilities: { multipleConnections: true, extensions: true, steppedCopy: true, rowCounts, encryption },
+    capabilities: {
+      multipleConnections: true,
+      extensions: true,
+      steppedCopy: true,
+      rowCounts,
+      encryption,
+      columnDetails: true,
+    },
     worker: workerEntry,
     files: nodeDatabaseFiles,
     startWriterHost: async (path, options, hostOptions) => {

@@ -51,6 +51,17 @@ export function readOutcome(result: Metered<readonly unknown[]>): QueryOutcome {
 }
 
 /**
+ * Returns the metrics of a read that returns its columns with every row as an array.
+ *
+ * @param result - The columns and rows, with the read's row counts when the driver reports them.
+ * @returns The number of rows returned and the row counts.
+ * @internal
+ */
+export function columnReadOutcome(result: Metered<{ rows: readonly unknown[] }>): QueryOutcome {
+  return { rowsReturned: result.value.rows.length, ...rowCountsOf(result) }
+}
+
+/**
  * Returns the metrics of a read that returns its first row.
  *
  * @param result - The row, with the read's row counts when the driver reports them.

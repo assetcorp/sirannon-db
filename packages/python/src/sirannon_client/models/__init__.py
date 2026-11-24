@@ -736,6 +736,29 @@ class ClusterStatusResponse(ApiModel):
     """
 
 
+class ColumnDetail(ApiModel):
+    """Describes one column of a result, in the order that the statement returns its columns."""
+
+    name: str
+    """The column's name in the result, which `AS` sets and which can repeat across columns."""
+    declared_type: str | None = Field(alias="declaredType")
+    """The type that the table's schema declares for the source column, or `null` for an expression
+    or when the driver cannot report it.
+    """
+    table: str | None
+    """The table that the value comes from, or `null` for an expression or when the driver cannot
+    report it.
+    """
+    column: str | None
+    """The column of that table that the value comes from, or `null` for an expression or when the
+    driver cannot report it.
+    """
+    database: str | None
+    """The schema that holds that table, such as `main`, or `null` for an expression or when the
+    driver cannot report it.
+    """
+
+
 class DatabaseStatus(ApiModel):
     """Whether one open database can serve requests."""
 
@@ -983,6 +1006,23 @@ class OperationQueryRequest(ApiModel):
     """The read concern that this read requires."""
 
 
+class QueryColumnsResponse(ApiModel):
+    """The body that `POST /db/{id}/query` returns for a request with `shape` set to `columns`."""
+
+    columns: list[ColumnDetail]
+    """One entry for each result column, in order, with `null` for a detail that SQLite or the
+    driver does not report.
+    """
+    rows: list[list[Any]]
+    """One array for each row, holding the row's values in column order, with blobs and large
+    integers in their tagged wire form.
+    """
+    truncated: Annotated[Literal["rows", "bytes"], OPEN_ENUM] | None
+    """`rows` or `bytes` when that limit stopped the read before its last row, and `null` when the
+    answer holds every row.
+    """
+
+
 class QueryRequest(ApiModel):
     """Body of `POST /db/{id}/query`."""
 
@@ -992,6 +1032,18 @@ class QueryRequest(ApiModel):
     """The values to bind to the statement, by name or by position."""
     read_concern: ReadConcern | None = Field(default=None, alias="readConcern")
     """The read concern that this read requires."""
+    shape: Literal["columns"] | None = None
+    """`columns` to receive a QueryColumnsResponse, which holds each column's details and each row
+    as an array of values in column order. Without it the server answers with a QueryResponse.
+    """
+    max_rows: int | float | None = Field(default=None, alias="maxRows")
+    """The most rows that a `columns` answer holds, as a non-negative safe integer; the server
+    reads one more row to learn whether more exist.
+    """
+    max_bytes: int | float | None = Field(default=None, alias="maxBytes")
+    """The most bytes of values that a `columns` answer holds, as a non-negative safe integer,
+    where every value counts 8 bytes and a TEXT or BLOB value also counts its length in bytes.
+    """
 
 
 class QueryResponse(ApiModel):
@@ -1422,6 +1474,14 @@ class WSQueryMessage(ApiModel):
     """The arguments that the registered read takes."""
     read_concern: ReadConcern | None = Field(default=None, alias="readConcern")
     """The read concern that this read requires."""
+    shape: Literal["columns"] | None = None
+    """`columns` to receive each column's details and each row as an array of values in column
+    order; it applies to `sql` alone.
+    """
+    max_rows: int | float | None = Field(default=None, alias="maxRows")
+    """The most rows that a `columns` result holds, as a non-negative safe integer."""
+    max_bytes: int | float | None = Field(default=None, alias="maxBytes")
+    """The most bytes of values that a `columns` result holds, as a non-negative safe integer."""
 
 
 class WSResultMessage(ApiModel):
@@ -1432,7 +1492,15 @@ class WSResultMessage(ApiModel):
     """
     id: str
     """The identifier from the request."""
-    data: QueryResponse | ExecuteResponse | TransactionResponse | BatchResponse | BulkLoadResult | AckResponse
+    data: (
+        QueryResponse
+        | QueryColumnsResponse
+        | ExecuteResponse
+        | TransactionResponse
+        | BatchResponse
+        | BulkLoadResult
+        | AckResponse
+    )
     """The reply body, whose shape depends on the request."""
 
 
@@ -1593,6 +1661,7 @@ __all__ = [
     "ClusterReadEndpointInfo",
     "ClusterStatusResponse",
     "ClusterStatusResponseCurrentPrimaryObject",
+    "ColumnDetail",
     "DatabaseStatus",
     "EncryptionChangeRequest",
     "EncryptionChangeStatus",
@@ -1613,6 +1682,7 @@ __all__ = [
     "OperationExecuteRequest",
     "OperationExecuteResponse",
     "OperationQueryRequest",
+    "QueryColumnsResponse",
     "QueryRequest",
     "QueryResponse",
     "ReadConcern",

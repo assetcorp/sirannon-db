@@ -93,6 +93,24 @@ export function encodeWireRowsInPlace(rows: unknown[]): unknown[] {
   return rows
 }
 
+/**
+ * Encodes each bigint and binary value in place, in rows of values that Sirannon builds for a single response.
+ *
+ * @param rows - The rows, each an array of values in column order, which this function modifies.
+ * @returns The same rows, with each bigint and binary value encoded.
+ */
+export function encodeWireArrayRowsInPlace(rows: unknown[][]): unknown[][] {
+  for (const row of rows) {
+    for (let index = 0; index < row.length; index++) {
+      const cell = row[index]
+      if (typeof cell === 'bigint' || (typeof cell === 'object' && cell !== null && isBinaryValue(cell))) {
+        row[index] = encodeTaggedLeaf(cell)
+      }
+    }
+  }
+  return rows
+}
+
 export function decodeTaggedValues(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value
   if (isBinaryValue(value)) return value

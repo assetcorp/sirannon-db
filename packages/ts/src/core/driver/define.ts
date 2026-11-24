@@ -28,7 +28,11 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver {
     throw new SirannonError('Driver worker entry must define a string specifier', 'INVALID_DRIVER')
   }
   return Object.freeze({
-    capabilities: Object.freeze({ ...config.capabilities, encryption: config.capabilities.encryption === true }),
+    capabilities: Object.freeze({
+      ...config.capabilities,
+      encryption: config.capabilities.encryption === true,
+      columnDetails: config.capabilities.columnDetails === true,
+    }),
     open: config.open.bind(config),
     ...(config.worker ? { worker: Object.freeze({ ...config.worker }) } : {}),
     ...(config.startWriterHost ? { startWriterHost: config.startWriterHost.bind(config) } : {}),

@@ -3,6 +3,7 @@ import type {
   BatchResponse,
   ExecuteResponse,
   LoadResponse,
+  QueryColumnsResponse,
   QueryResponse,
   TransactionResponse,
 } from './protocol.js'
@@ -191,7 +192,14 @@ export interface WSResultMessage {
   /** The identifier from the request. */
   id: string
   /** The reply body, whose shape depends on the request. */
-  data: QueryResponse | ExecuteResponse | TransactionResponse | BatchResponse | LoadResponse | AckResponse
+  data:
+    | QueryResponse
+    | QueryColumnsResponse
+    | ExecuteResponse
+    | TransactionResponse
+    | BatchResponse
+    | LoadResponse
+    | AckResponse
 }
 
 /**

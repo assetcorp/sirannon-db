@@ -569,6 +569,7 @@ export class ReplicationEngine extends EventEmitter {
     // @internal (undocumented)
     readonly peerTracker: PeerTracker;
     query<T>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
+    queryWithColumns(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult>;
     // @internal (undocumented)
     readonly rejoin: RejoinState;
     // @internal (undocumented)

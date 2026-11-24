@@ -6,6 +6,7 @@ import {
   STATEMENT_HEAD_TOKENS,
   type StatementHeadToken,
 } from './sql-statement-head.js'
+import { StringNamePositions } from './sql-string-names.js'
 import {
   isWordPart,
   isWordStart,
@@ -82,7 +83,9 @@ function holdsAnyWord(sql: string, words: readonly string[]): boolean {
  * The query API refuses a statement that names a `_sirannon` identifier, modifies a `sqlite_` identifier, or uses
  * `ATTACH`, `DETACH`, `VACUUM INTO`, `PRAGMA writable_schema`, `PRAGMA temp_store_directory`,
  * `PRAGMA data_store_directory`, or `PRAGMA wal_checkpoint`. A pragma's name counts whether the statement writes it bare, quoted as an identifier,
- * or as a string literal. It also refuses what {@link migrationSqlError} refuses: a statement that begins, ends, or
+ * or as a string literal. A table name counts in every form that SQLite reads as a name: bare, in double quotes, in
+ * backticks, in square brackets, and as a single-quoted string wherever SQLite's grammar expects a name, such as
+ * `FROM '_sirannon_meta'`. It also refuses what {@link migrationSqlError} refuses: a statement that begins, ends, or
  * marks a transaction, and one that creates or drops a temporary object.
  *
  * @param sql - The statement text, which can hold several statements separated by semicolons.
@@ -242,6 +245,7 @@ function scan(sql: string, scope: GuardScope): string | null {
   let i = 0
   let statementStart = true
   const state = freshStatement(scope, false)
+  const names = new StringNamePositions()
 
   while (i < n) {
     const c = sql[i]
@@ -266,18 +270,21 @@ function scan(sql: string, scope: GuardScope): string | null {
 
     if (c === "'") {
       const namesPragma = state.verb === 'pragma' && !state.pragmaValue
-      if (!namesPragma && !collectsHead(state)) {
+      const readsAsName = !namesPragma && names.readsAsName(state.depth, state.verb)
+      names.term()
+      statementStart = false
+      if (!namesPragma && !readsAsName && !collectsHead(state)) {
         i = skipQuoted(sql, i, "'")
-        statementStart = false
         continue
       }
       const literal = readDelimited(sql, i, "'")
       const error = namesPragma
         ? pragmaError(literal.value, state)
-        : headError({ kind: 'name', text: literal.value.toLowerCase() }, state)
+        : readsAsName
+          ? quotedNameError(literal.value, state)
+          : headError({ kind: 'name', text: literal.value.toLowerCase() }, state)
       if (error) return error
       i = literal.next
-      statementStart = false
       continue
     }
 
@@ -285,6 +292,7 @@ function scan(sql: string, scope: GuardScope): string | null {
       const delimited = readDelimited(sql, i, c)
       const error = quotedNameError(delimited.value, state)
       if (error) return error
+      names.term()
       i = delimited.next
       statementStart = false
       continue
@@ -295,6 +303,7 @@ function scan(sql: string, scope: GuardScope): string | null {
       const stop = end === -1 ? n : end
       const error = quotedNameError(sql.slice(i + 1, stop), state)
       if (error) return error
+      names.term()
       i = stop + 1
       statementStart = false
       continue
@@ -304,12 +313,14 @@ function scan(sql: string, scope: GuardScope): string | null {
       i++
       statementStart = true
       Object.assign(state, freshStatement(state.scope, state.triggerBody))
+      names.reset()
       continue
     }
 
     if (opensNamedParameter(c)) {
       const parameterError = headError({ kind: 'other', text: c }, state)
       if (parameterError) return parameterError
+      names.term()
       i = namedParameterEnd(sql, i)
       statementStart = false
       continue
@@ -318,8 +329,10 @@ function scan(sql: string, scope: GuardScope): string | null {
     if (isWordStart(c)) {
       let j = i + 1
       while (j < n && isWordPart(sql[j])) j++
-      const error = wordError(sql.slice(i, j), statementStart, state)
+      const word = sql.slice(i, j)
+      const error = wordError(word, statementStart, state)
       if (error) return error
+      names.word(word.toLowerCase(), state.depth)
       i = j
       statementStart = false
       continue
@@ -327,6 +340,7 @@ function scan(sql: string, scope: GuardScope): string | null {
 
     const symbolError = headError({ kind: c === '.' ? 'dot' : 'other', text: c }, state)
     if (symbolError) return symbolError
+    names.symbol(c, state.depth)
     if (state.verb === 'pragma' && (c === '(' || c === '=')) state.pragmaValue = true
     if (c === '(') state.depth++
     else if (c === ')' && state.depth > 0) state.depth--

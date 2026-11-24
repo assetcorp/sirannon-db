@@ -30,6 +30,21 @@ await db.execute('INSERT INTO users (name) VALUES (?)', ['Turing'])
 
 The client reads `GET /capabilities` once per server and caches the answer. When that answer omits `query.sql`, a statement fails with `SQL_NOT_ACCEPTED` before it leaves the process, so the client never sends a statement that the server would refuse.
 
+## Column details and capped reads
+
+`queryWithColumns` returns the details of every result column, together with each row as an array of values in column order, so when a join selects both `a.id` and `b.id`, the row keeps both values. Set `maxRows` or `maxBytes` when someone else writes the statement, such as a person who types SQL into a console, so that one read returns no more than you're prepared to hold in memory:
+
+```ts
+const { columns, rows, truncated } = await db.queryWithColumns(
+  'SELECT a.id, b.id, a.label FROM items a JOIN items b ON a.parent = b.id',
+  [],
+  { maxRows: 500, maxBytes: 1_048_576 },
+)
+if (truncated !== null) console.warn(`The read stopped at its ${truncated === 'rows' ? 'row' : 'byte'} limit`)
+```
+
+Each entry of `columns` has `name`, `declaredType`, `table`, `column`, and `database`, and the server sets a field to `null` when the column comes from an expression or when its driver can't report that field, as the [core guide](core.md#column-details-and-capped-reads) explains. Set each limit to a whole number from 0 to 2^53-1, because the client fails any other value with `INVALID_ARGUMENT` before it sends the request. A `TopologyAwareClient` routes the read in the same way that it routes every other read.
+
 ## Transactions and bulk writes
 
 Both transports support every write shape. The client sends a whole transaction in one request, and the server commits or rolls it back as a unit, so no network round trip falls between two of its statements:

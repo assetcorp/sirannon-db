@@ -7,6 +7,7 @@ export type {
   ConflictResolver,
 } from '../core/sync/types.js'
 export { SirannonClient } from './client.js'
+export type { ColumnQueryRequest } from './column-answers.js'
 export { type LoadAllOptions, RemoteDatabase } from './database-proxy.js'
 export { RemoteLiveQuery } from './remote-live-query.js'
 export {

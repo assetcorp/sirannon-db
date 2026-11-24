@@ -119,6 +119,11 @@ class TopologyChannel:
     async def query(self, sql: str, params: Params | None, read_concern: dict[str, Any] | None) -> Any:
         return await self._read(lambda channel, level: channel.query(sql, params, level))
 
+    async def query_columns(
+        self, sql: str, params: Params | None, read_concern: dict[str, Any] | None, limits: dict[str, int]
+    ) -> Any:
+        return await self._read(lambda channel, level: channel.query_columns(sql, params, level, limits))
+
     async def execute(self, sql: str, params: Params | None) -> dict[str, Any]:
         return await self._write(lambda channel: channel.execute(sql, params))
 

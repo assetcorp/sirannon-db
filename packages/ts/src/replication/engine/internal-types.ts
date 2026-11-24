@@ -1,6 +1,26 @@
 import type { SQLiteConnection } from '../../core/driver/types.js'
-import type { SyncAck, SyncHistoryPoint, SyncPhase, SyncState } from '../types.js'
+import type {
+  ForwardedTransactionResult,
+  ReplicationAck,
+  ReplicationBatch,
+  SyncAck,
+  SyncBatch,
+  SyncComplete,
+  SyncHistoryPoint,
+  SyncPhase,
+  SyncRequest,
+  SyncState,
+} from '../types.js'
 import type { TableStreamDigest } from './sync-verification.js'
+
+export type CoordinatorStampedMessage =
+  | ReplicationBatch
+  | ReplicationAck
+  | ForwardedTransactionResult
+  | SyncRequest
+  | SyncBatch
+  | SyncComplete
+  | SyncAck
 
 export interface ActiveSyncSession {
   requestId: string

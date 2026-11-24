@@ -100,7 +100,7 @@ ServerExecutionTarget {
 }
 ```
 
-The server resolves a target for each database through `resolveExecutionTarget`, or the registry when none is configured. A resolver returning null fails with `DATABASE_NOT_FOUND`. In coordinator mode the target enforces primary authority, sync readiness, forwarding, and write concern. Optional members gate features: a target without `bulkLoad` fails a served `/load` with `501 BULK_LOAD_UNSUPPORTED`, and one without `applyChanges` fails `/changes` with `501 SYNC_UNSUPPORTED`.
+The server resolves a target for each database through `resolveExecutionTarget`, or the registry when none is configured. A resolver returning null fails with `DATABASE_NOT_FOUND`. In coordinator mode the target enforces primary authority, sync readiness, forwarding, and write concern. Optional members gate features: a target without `bulkLoad` fails a served `/load` with `501 BULK_LOAD_UNSUPPORTED`, one without `applyChanges` fails `/changes` with `501 SYNC_UNSUPPORTED`, and one without `queryWithColumns` fails a columns read with `501 COLUMN_DETAILS_UNSUPPORTED`.
 
 ---
 
@@ -145,6 +145,7 @@ Request and response bodies are JSON. `lastInsertRowId` is a JSON number when it
 
 ```text
 POST /db/{id}/query        { sql, params?, readConcern? }        -> { rows: List<Map> }
+POST /db/{id}/query        { sql, params?, readConcern?, shape: 'columns', maxRows?, maxBytes? } -> { columns: List<ColumnDetail>, rows: List<List>, truncated }
 POST /db/{id}/execute      { sql, params?, writeConcern? }       -> { changes, lastInsertRowId }
 POST /db/{id}/transaction  { statements: List<{sql, params?}>, writeConcern? } -> { results: List<Execute> }
 POST /db/{id}/batch        { sql, paramsBatch, writeConcern? }   -> { results: List<Execute> }
@@ -155,6 +156,8 @@ POST /db/{id}/execute/{name} { args?, writeConcern? }  -> { results: List<Execut
 ```
 
 The five statement routes and the five statement WebSocket messages must fail a statement whose `sql` is empty, or whose `params` is neither an object nor an array, with `400 INVALID_REQUEST` over HTTP and `INVALID_MESSAGE` over WebSocket. They apply the statement guard of [02-core.md](02-core.md#reserved-identifiers), so a statement that opens, ends, or marks a transaction, or creates or drops a temporary object, fails with `403 FORBIDDEN_SQL` over HTTP and `FORBIDDEN_SQL` over WebSocket. A caller runs several statements in one transaction through `/transaction` or a `transaction` message.
+
+A `/query` body or a `query` message that carries `sql` and sets `shape` to `columns` is a columns read. The server must answer a columns read through [`queryWithColumns`](02-core.md#column-reads) with `columns`, with `rows` as lists in column order under the value encoding, and with `truncated`. The server must fail a request with `400 INVALID_REQUEST` over HTTP and `INVALID_MESSAGE` over WebSocket when it sets `shape` to any value other than `columns`, sets `maxRows` or `maxBytes` to anything other than an integer from 0 to 2^53 - 1, or sets either limit without `shape`. The server must fail a `query` message that carries `name` and sets `shape`, `maxRows`, or `maxBytes` with `INVALID_MESSAGE`.
 
 `acceptSql` governs the five statement routes, the five statement WebSocket messages, and table subscriptions, and defaults to false. With it false, a server must fail `POST /db/{id}/query`, `/execute`, `/transaction`, `/batch`, and `/load`, and a `query`, `execute`, `transaction`, `batch`, or `load` message, with `SQL_NOT_ACCEPTED`. It must also fail a `subscribe` message carrying `table` or `tables` and no `deviceId` with `SQL_NOT_ACCEPTED`, unless the registry has a `beforeSubscribe` hook. It serves its other routes as their own options allow: registered operations, live queries, snapshots, device sync, and backups. The `authenticate` hook, `onBeforeSubscribe`, `onBeforeSnapshot`, and `onBeforePush` are where an implementation refuses a caller on those routes, and a registered operation scopes the rows it returns through the arguments the server fills from identity. A path that matches no route must still fail with `NOT_FOUND`, so that a caller distinguishes a refused capability from a wrong address.
 
@@ -281,14 +284,14 @@ A server must send no server file path to a client, over HTTP or WebSocket. For 
 
 | Status | Codes |
 |--------|-------|
-| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
+| 400 | `INVALID_REQUEST`, `INVALID_JSON`, `EMPTY_BODY`, `QUERY_ERROR`, `TRANSACTION_ERROR`, `INVALID_DURABILITY`, `INVALID_SYNCHRONOUS`, `INVALID_READ_LIMIT`, `BATCH_VALIDATION_ERROR`, `MISSING_ARGUMENT`, `ARGUMENT_NOT_ALLOWED`, `UNSUPPORTED_SUBPROTOCOL`, `DEVICE_CLOCK_AHEAD` |
 | 401 | `IDENTITY_REQUIRED` |
 | 403 | `READ_ONLY`, `FORBIDDEN_SQL`, `HOOK_DENIED`, `SQL_NOT_ACCEPTED`, `BACKUP_RESTORE_NOT_ACCEPTED`, `DEVICE_SYNC_NOT_ACCEPTED`, `ENCRYPTION_CHANGE_NOT_ACCEPTED` |
 | 404 | `DATABASE_NOT_FOUND`, `NOT_FOUND`, `UNKNOWN_QUERY` |
 | 409 | `STALE_PRIMARY`, `PROTOCOL_VERSION_MISMATCH`, `MIGRATION_REQUIRED`, `SCHEMA_AHEAD`, `REGISTRY_MISMATCH`, `BACKUP_CHAIN_BROKEN`, `BACKUP_RESTORE_IN_PROGRESS`, `ENCRYPTION_CHANGE_IN_PROGRESS`, `ENCRYPTION_REQUIRED`, `REPLICATION_ACTIVE` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR`, `HOOK_ERROR`, `WRITER_WORKER_TIMEOUT`, `INVALID_ENCRYPTION_KEY`, `ENCRYPTION_KEY_MISSING`, `ENCRYPTION_KEY_REJECTED`, `DATABASE_NOT_ENCRYPTED`, `ENCRYPTED_PAGE_CORRUPT`, `ENCRYPTION_CHANGE_ABORTED` |
-| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED`, `ENCRYPTION_UNSUPPORTED` |
+| 501 | `BULK_LOAD_UNSUPPORTED`, `SYNC_UNSUPPORTED`, `BACKUP_UNSUPPORTED`, `ENCRYPTION_UNSUPPORTED`, `COLUMN_DETAILS_UNSUPPORTED` |
 | 502 | `BACKUP_DESTINATION_ERROR` |
 | 503 | `DATABASE_CLOSED`, `SHUTDOWN`, `READ_CONCERN_ERROR`, `COORDINATOR_UNAVAILABLE`, `AUTHORITY_LOST`, `NO_SAFE_PRIMARY`, `NODE_NOT_IN_SYNC`, `NODE_DRAINING`, `UNSAFE_RECOVERY_REQUIRED`, `WRITE_OVERLOADED`, `ENCRYPTION_KEY_UNAVAILABLE` |
 
@@ -313,7 +316,7 @@ The server supports one subprotocol, the plain identifier `sirannon.v1`. It must
 { type: 'subscribe',   id, name, args?, registryDigest? }        -- a live query
 { type: 'unsubscribe', id }
 { type: 'ack',         id, deviceId, seq }              -- see 08-device-sync.md
-{ type: 'query',       id, sql, params?, readConcern? }
+{ type: 'query',       id, sql, params?, readConcern?, shape?, maxRows?, maxBytes? }
 { type: 'query',       id, name, args?, readConcern? }
 { type: 'execute',     id, sql, params? }
 { type: 'execute',     id, name, args?, writeConcern? }

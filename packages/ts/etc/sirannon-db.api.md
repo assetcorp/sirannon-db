@@ -481,6 +481,31 @@ export interface ClusterStatusInfo {
 }
 
 // @public
+export interface ColumnDetail {
+    column: string | null;
+    database: string | null;
+    declaredType: string | null;
+    name: string;
+    table: string | null;
+}
+
+// @public
+export interface ColumnRead {
+    columns: ColumnDetail[];
+    rows: unknown[][];
+    rowsRead?: number;
+    rowsWritten?: number;
+    truncated: ReadTruncation | null;
+}
+
+// @public
+export interface ColumnReadLimits {
+    maxBytes?: number;
+    maxRows?: number;
+    rawIntegers?: boolean;
+}
+
+// @public
 export interface ConnectionHookContext {
     databaseId: string;
     path: string;
@@ -570,7 +595,7 @@ export function createTenantResolver(options: TenantResolverOptions): (id: strin
 } | undefined;
 
 // @public
-export class Database extends DatabaseEncryption {
+export class Database extends DatabaseColumnQueries {
     appliedMigrations(): Promise<AppliedMigrationRow[]>;
     // @internal (undocumented)
     applyChanges(batch: ReplicationBatch, resolver?: ConflictResolver | ((table: string) => ConflictResolver)): Promise<ApplyResult>;
@@ -629,6 +654,13 @@ export class DatabaseBackups extends DatabaseLifecycle {
 
 // @public
 export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void;
+
+// @public
+export class DatabaseColumnQueries extends DatabaseEncryption {
+    queryWithColumns(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult>;
+    // @internal
+    queryWithColumnsForWire(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult>;
+}
 
 // @public
 export interface DatabaseCopyRequest {
@@ -734,6 +766,7 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver;
 
 // @public
 export interface DriverCapabilities {
+    columnDetails?: boolean;
     encryption: boolean;
     extensions: boolean;
     multipleConnections: boolean;
@@ -1183,6 +1216,19 @@ export interface QueryOptions {
 }
 
 // @public
+export interface QueryWithColumnsOptions extends QueryOptions {
+    maxBytes?: number;
+    maxRows?: number;
+}
+
+// @public
+export interface QueryWithColumnsResult {
+    columns: ColumnDetail[];
+    rows: unknown[][];
+    truncated: ReadTruncation | null;
+}
+
+// @public
 export function readBackupChains(destination: BackupDestination, chainName?: string): Promise<BackupChain[]>;
 
 // @public
@@ -1214,6 +1260,9 @@ export interface ReadOperation<Identity = unknown> {
 
 // @public
 export function readSubprotocolCredential(ctx: RequestContext, prefix: string): string | undefined;
+
+// @public
+export type ReadTruncation = 'rows' | 'bytes';
 
 // @public
 export interface ReplicationStatusInfo {
@@ -1297,6 +1346,8 @@ export interface ServerExecutionTarget {
     }[], options?: QueryOptions): Promise<ExecuteResult[]>;
     query<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T[]>;
     queryForWire?(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>;
+    queryWithColumns?(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult>;
+    queryWithColumnsForWire?(sql: string, params?: Params, options?: QueryWithColumnsOptions): Promise<QueryWithColumnsResult>;
     transaction<T>(fn: (tx: Transaction) => Promise<T>, options?: QueryOptions): Promise<T>;
 }
 
@@ -1416,6 +1467,7 @@ export interface SQLiteStatement {
     allCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>;
     allRaw?<T = unknown>(...params: unknown[]): Promise<T[]>;
     allRawCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T[]>>;
+    allWithColumns?(limits: ColumnReadLimits, ...params: unknown[]): Promise<ColumnRead>;
     get<T = unknown>(...params: unknown[]): Promise<T | undefined>;
     getCounted?<T = unknown>(...params: unknown[]): Promise<Counted<T | undefined>>;
     run(...params: unknown[]): Promise<RunResult>;

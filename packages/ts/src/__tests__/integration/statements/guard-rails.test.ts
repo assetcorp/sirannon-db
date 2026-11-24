@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, constants as sqliteConstants } from 'node:sqlite'
 import BetterSqlite3 from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Database } from '../../../core/database.js'
@@ -29,6 +29,32 @@ const INTERNAL_TABLE_STATEMENTS = [
   'WITH log AS (SELECT * FROM _sirannon_changes) SELECT count(*) FROM log',
   'SELECT 1; DROP TABLE _sirannon_changes',
   'SELECT 1 /* harmless */ ; DELETE FROM "_sirannon_meta"',
+  "SELECT * FROM '_sirannon_meta'",
+  "select * from '_SIRANNON_CHANGES'",
+  "SELECT * FROM main.'_sirannon_meta'",
+  "SELECT * FROM 'main'.'_sirannon_meta'",
+  "SELECT * FROM orders, '_sirannon_changes'",
+  "SELECT * FROM orders LEFT JOIN '_sirannon_meta' AS m ON m.key = orders.item",
+  "SELECT * FROM orders WHERE item IN '_sirannon_meta'",
+  "SELECT (SELECT value FROM '_sirannon_meta') FROM orders",
+  "WITH leaked AS (SELECT * FROM '_sirannon_meta') SELECT * FROM leaked",
+  "INSERT INTO '_sirannon_meta' (key, value) VALUES ('a', 'b')",
+  "REPLACE INTO '_sirannon_meta' VALUES ('a', 'b')",
+  "INSERT INTO notes (body) SELECT value FROM '_sirannon_meta'",
+  "UPDATE '_sirannon_meta' SET value = 'x'",
+  "UPDATE OR IGNORE main.'_sirannon_meta' SET value = 'x'",
+  "UPDATE notes SET body = m.value FROM orders, '_sirannon_meta' AS m",
+  "DELETE FROM '_sirannon_changes'",
+  "DROP TABLE IF EXISTS '_sirannon_meta'",
+  "ALTER TABLE '_sirannon_meta' ADD COLUMN extra TEXT",
+  "CREATE TABLE '_sirannon_shadow' (id INTEGER)",
+  "CREATE VIEW leak AS SELECT * FROM '_sirannon_meta'",
+  "CREATE INDEX meta_value ON '_sirannon_meta' (value)",
+  "CREATE TRIGGER copy_out AFTER INSERT ON notes BEGIN DELETE FROM '_sirannon_meta'; END",
+  "PRAGMA table_info('_sirannon_meta')",
+  "SELECT * FROM pragma_table_info('_sirannon_changes')",
+  "EXPLAIN QUERY PLAN SELECT * FROM '_sirannon_meta'",
+  "SELECT 1; SELECT * FROM '_sirannon_meta'",
 ]
 
 let workspace: Workspace
@@ -67,6 +93,7 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL)')
     await db.execute('CREATE INDEX orders_by_item ON orders (item)')
     await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)')
+    await db.execute('CREATE TABLE window (id INTEGER)')
     await db.executeBatch('INSERT INTO orders (item) VALUES (?)', [['kettle'], ['teapot'], ['kettle']])
     await db.watch('orders')
     await db.execute('INSERT INTO orders (item) VALUES (?)', ['strainer'])
@@ -225,7 +252,126 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     expect(columnRaw(path, 'SELECT count(*) FROM notes')).toEqual([0n])
     expect(await db.query("PRAGMA journal_mode = 'wal'")).toEqual([{ journal_mode: 'wal' }])
   })
+
+  it('refuses exactly the single-quoted names that SQLite resolves to an internal table and reads the rest as values', async () => {
+    const { db, path } = await openShop()
+    await db.execute("INSERT INTO notes (body) VALUES ('_sirannon_meta'), ('_sirannon_changes'), ('plain')")
+    const before = schemaSnapshot(path)
+    const notesBefore = columnRaw(path, 'SELECT body FROM notes ORDER BY id')
+
+    for (const sql of QUOTED_INTERNAL_TABLES) {
+      const reached = tablesSqliteReaches(path, sql)
+      if (reached)
+        expect(
+          reached.some(name => name.startsWith('_sirannon')),
+          `SQLite reaches no internal table in ${sql}`,
+        ).toBe(true)
+      for (const [label, call] of ENTRY_POINTS) {
+        await expect(call(db, sql), `${label}: ${sql}`).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+      }
+      await expect(db.live(sql), `live: ${sql}`).rejects.toMatchObject({ code: 'FORBIDDEN_SQL' })
+    }
+    expect(columnRaw(path, 'SELECT body FROM notes ORDER BY id')).toEqual(notesBefore)
+    expect(schemaSnapshot(path)).toEqual(before)
+
+    for (const sql of QUOTED_INTERNAL_VALUES) {
+      const reached = tablesSqliteReaches(path, sql)
+      if (reached)
+        expect(
+          reached.filter(name => name.startsWith('_sirannon')),
+          sql,
+        ).toEqual([])
+      const expected = readRaw(path, sql).map(row =>
+        Object.fromEntries(
+          Object.entries(row).map(([key, value]) => [key, typeof value === 'bigint' ? Number(value) : value]),
+        ),
+      )
+      expect(await db.query(sql), sql).toEqual(expected)
+      const columns = await db.queryWithColumns(sql)
+      expect(
+        columns.rows.map(row =>
+          Object.fromEntries(columns.columns.map((column, position) => [column.name, row[position]])),
+        ),
+        sql,
+      ).toEqual(expected)
+    }
+
+    expect(schemaSnapshot(path)).toEqual(before)
+  })
 })
+
+const QUOTED_INTERNAL_TABLES = [
+  "SELECT * FROM (notes AS with, '_sirannon_meta')",
+  "SELECT * FROM window, '_sirannon_meta'",
+  "SELECT * FROM orders AS window, '_sirannon_meta'",
+  "CREATE TABLE copied AS SELECT * FROM ('_sirannon_meta')",
+  "INSERT INTO notes (body) SELECT value FROM ('_sirannon_meta')",
+  "UPDATE notes SET body = (SELECT value FROM ('_sirannon_meta') LIMIT 1)",
+  "SELECT * FROM '_sirannon_meta'",
+  "select key from main.'_SIRANNON_META'",
+  "SELECT * FROM orders CROSS JOIN '_sirannon_changes'",
+  "SELECT * FROM orders WHERE item NOT IN (SELECT key FROM main.'_sirannon_meta')",
+  "SELECT * FROM orders WHERE EXISTS (SELECT 1 FROM orders, '_sirannon_changes')",
+  "WITH leaked AS (SELECT * FROM '_sirannon_meta') SELECT * FROM leaked",
+  "INSERT OR REPLACE INTO '_sirannon_meta' VALUES ('a', 'b')",
+  "UPDATE notes SET body = 'x' FROM '_sirannon_meta'",
+  "DELETE FROM main.'_sirannon_meta' WHERE key = 'a'",
+  "CREATE TABLE copied AS SELECT * FROM '_sirannon_changes'",
+  "ANALYZE '_sirannon_meta'",
+  "PRAGMA main.index_list('_sirannon_meta')",
+  "SELECT * FROM ('_sirannon_meta')",
+  "SELECT * FROM ( '_sirannon_meta' )",
+  "SELECT * FROM orders JOIN ('_sirannon_meta')",
+  "SELECT * FROM orders, ('_sirannon_meta')",
+  "SELECT * FROM (orders, '_sirannon_meta')",
+  "SELECT * FROM ((orders, ('_sirannon_meta')))",
+  "SELECT * FROM (((('_sirannon_changes'))))",
+  "SELECT * FROM (SELECT 1) AS one, ('_sirannon_meta')",
+  "SELECT * FROM orders LEFT JOIN (orders AS o JOIN ('_sirannon_meta')) ON 1",
+  "INSERT INTO notes (body) SELECT key FROM (orders, ('_sirannon_meta'))",
+  "UPDATE notes SET body = 'x' FROM (('_sirannon_meta'))",
+]
+
+const QUOTED_INTERNAL_VALUES = [
+  "SELECT orders.id FROM orders JOIN notes ON notes.body IS DISTINCT FROM ('_sirannon_meta') ORDER BY orders.id",
+  "SELECT * FROM (SELECT '_sirannon_meta' AS name, '_sirannon_changes' AS other)",
+  "SELECT * FROM (VALUES ('_sirannon_meta'), ('_sirannon_changes'))",
+  "SELECT body FROM notes WHERE body = ('_sirannon_meta')",
+  "SELECT body FROM notes WHERE body IS DISTINCT FROM ('_sirannon_meta')",
+  "SELECT body FROM notes WHERE body = '_sirannon_meta'",
+  "SELECT '_sirannon_meta' AS name, '_sirannon_changes' AS other FROM notes WHERE body = 'plain'",
+  "SELECT body FROM notes WHERE body IN ('_sirannon_meta', '_sirannon_changes') ORDER BY body",
+  "SELECT body FROM notes WHERE body IS DISTINCT FROM '_sirannon_meta' ORDER BY body",
+  "SELECT body FROM notes WHERE body LIKE '_sirannon%' ORDER BY body",
+  "SELECT CASE WHEN body = 'plain' THEN '_sirannon_meta' ELSE '_sirannon_changes' END AS label FROM notes ORDER BY id",
+  "SELECT body FROM notes WHERE body BETWEEN '_sirannon_a' AND '_sirannon_z' ORDER BY body",
+  "SELECT count(*) FILTER (WHERE body <> '_sirannon_meta') AS n FROM notes",
+  "SELECT coalesce(NULL, '_sirannon_meta') || '_sirannon_changes' AS joined",
+  "SELECT json_extract('{\"_sirannon_meta\":1}', '$._sirannon_meta') AS found",
+  "SELECT orders.item FROM orders JOIN notes ON notes.body <> '_sirannon_meta' WHERE orders.id = 1 LIMIT 1",
+  "SELECT body FROM notes WHERE body IN ('_sirannon_meta') ORDER BY body",
+  "SELECT * FROM (SELECT '_sirannon_meta' AS name)",
+  "SELECT * FROM (VALUES ('_sirannon_meta'))",
+  "SELECT * FROM (WITH listed AS (SELECT '_sirannon_changes' AS name) SELECT name FROM listed)",
+  "SELECT orders.item FROM orders JOIN notes ON (notes.body = '_sirannon_meta') ORDER BY orders.id",
+  'SELECT value FROM json_each((\'["_sirannon_meta"]\'))',
+]
+
+function tablesSqliteReaches(path: string, sql: string): string[] | undefined {
+  const raw = new DatabaseSync(path, { readOnly: true })
+  try {
+    if (typeof raw.setAuthorizer !== 'function') return undefined
+    const names: string[] = []
+    raw.setAuthorizer((_action, first, second) => {
+      for (const name of [first, second]) if (typeof name === 'string') names.push(name.toLowerCase())
+      return sqliteConstants.SQLITE_OK
+    })
+    raw.prepare(sql)
+    return names
+  } finally {
+    raw.close()
+  }
+}
 
 describe.each(DRIVER_PLACEMENTS)('statement prefixes with $label', ({ driver, writerWorker }) => {
   it('accepts pragma values that refer to tables with reserved pragma names', async () => {

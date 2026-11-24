@@ -5,6 +5,7 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { refuseEncryptedOpen } from '../../core/encryption/errors.js'
 import { ExtensionError } from '../../core/errors.js'
 import { bindStatement } from './bind.js'
+import { readWithColumns } from './column-reads.js'
 import { readColumn } from './read.js'
 
 const SQLITE_ROW = 100
@@ -37,6 +38,7 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
       steppedCopy: false,
       rowCounts: false,
       encryption: false,
+      columnDetails: true,
     },
     async open(path, options) {
       refuseEncryptedOpen('wa-sqlite', options)
@@ -135,6 +137,10 @@ export function waSqlite(driverOptions?: WaSqliteOptions): SQLiteDriver {
                 obj[result.columns[i]] = result.rows[0][i]
               }
               return obj as T
+            },
+
+            async allWithColumns(limits, ...params) {
+              return readWithColumns(sqlite3, module, db, sql, params, limits)
             },
 
             async run(...params: unknown[]) {

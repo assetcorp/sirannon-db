@@ -6,6 +6,7 @@ import type {
   RequestContext,
   ServerExecutionTargetResolver,
 } from '../core/types.js'
+import { columnReadOptions, queryWireColumns, requestedReadShape } from './column-shape.js'
 import type { ResponseAbort } from './http-common.js'
 import {
   parseBody,
@@ -81,10 +82,27 @@ export function handleQuery(sirannon: Sirannon, resolveTarget?: ServerExecutionT
       return
     }
 
+    const shape = requestedReadShape(body as unknown as Record<string, unknown>)
+    if (!shape.ok) {
+      sendError(res, 400, 'INVALID_REQUEST', shape.message)
+      return
+    }
+
     const target = await resolveExecutionTarget(res, abort, sirannon, dbId, resolveTarget)
     if (!target) return
 
     try {
+      if (shape.columns) {
+        const result = await queryWireColumns(
+          target,
+          body.sql,
+          params.value,
+          columnReadOptions(shape, readConcern.value),
+        )
+        if (abort.aborted) return
+        sendJson(res, result)
+        return
+      }
       const rows = await queryWireRows(
         target,
         body.sql,

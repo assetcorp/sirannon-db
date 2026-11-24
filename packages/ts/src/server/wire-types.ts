@@ -24,6 +24,7 @@ import type {
   ExecuteResponse,
   LoadRequest,
   LoadResponse,
+  QueryColumnsResponse,
   QueryRequest,
   QueryResponse,
   TransactionRequest,
@@ -152,6 +153,7 @@ export interface HttpWireTypes {
   ClusterStatusResponse: ClusterStatusResponse
   QueryRequest: QueryRequest
   QueryResponse: QueryResponse
+  QueryColumnsResponse: QueryColumnsResponse
   ExecuteRequest: ExecuteRequest
   ExecuteResponse: ExecuteResponse
   TransactionRequest: TransactionRequest

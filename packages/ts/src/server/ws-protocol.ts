@@ -115,6 +115,12 @@ export interface WSQueryMessage {
   args?: Record<string, unknown>
   /** The read concern that this read requires. */
   readConcern?: ReadConcern
+  /** `columns` to receive each column's details and each row as an array of values in column order; it applies to `sql` alone. */
+  shape?: 'columns'
+  /** The most rows that a `columns` result holds, as a non-negative safe integer. */
+  maxRows?: number
+  /** The most bytes of values that a `columns` result holds, as a non-negative safe integer. */
+  maxBytes?: number
 }
 
 /**

@@ -124,9 +124,19 @@ export interface LoadRequest {
 export type LoadResponse = BulkLoadResult;
 
 // @public
+export interface QueryColumnsResponse {
+    columns: ColumnDetail[];
+    rows: unknown[][];
+    truncated: ReadTruncation | null;
+}
+
+// @public
 export interface QueryRequest {
+    maxBytes?: number;
+    maxRows?: number;
     params?: Record<string, unknown> | unknown[];
     readConcern?: ReadConcern;
+    shape?: 'columns';
     sql: string;
 }
 
@@ -247,16 +257,19 @@ export interface WSLoadMessage {
 export interface WSQueryMessage {
     args?: Record<string, unknown>;
     id: string;
+    maxBytes?: number;
+    maxRows?: number;
     name?: string;
     params?: Record<string, unknown> | unknown[];
     readConcern?: ReadConcern;
+    shape?: 'columns';
     sql?: string;
     type: 'query';
 }
 
 // @public
 export interface WSResultMessage {
-    data: QueryResponse | ExecuteResponse | TransactionResponse | BatchResponse | LoadResponse | AckResponse;
+    data: QueryResponse | QueryColumnsResponse | ExecuteResponse | TransactionResponse | BatchResponse | LoadResponse | AckResponse;
     id: string;
     type: 'result';
 }

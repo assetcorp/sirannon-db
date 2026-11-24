@@ -6,9 +6,11 @@ import type {
   ErrorResponse,
   ExecuteResponse,
   LoadResponse,
+  QueryColumnsResponse,
   QueryResponse,
   TransactionResponse,
 } from '../../server/protocol.js'
+import { type ColumnQueryRequest, columnQueryBody, columnsAnswerFrom } from '../column-answers.js'
 import { DEFAULT_HTTP_REQUEST_TIMEOUT_MS, postJson } from '../http-json.js'
 import type { RemoteSubscription, Transport } from '../types.js'
 import { RemoteError } from '../types.js'
@@ -56,6 +58,11 @@ export class HttpTransport implements Transport {
       readConcern,
     })
     return { rows: decodeWireRowsInPlace(response.rows ?? []) as Record<string, unknown>[] }
+  }
+
+  /** Sends a read that asks for each column's details with each row as an array, under the two limits. */
+  async queryWithColumns(sql: string, params?: Params, request?: ColumnQueryRequest): Promise<QueryColumnsResponse> {
+    return columnsAnswerFrom(await this.post<unknown>('/query', columnQueryBody(sql, params, request)))
   }
 
   /** Sends one write. */

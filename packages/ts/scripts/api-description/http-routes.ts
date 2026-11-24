@@ -18,6 +18,7 @@ export interface HttpRouteDescription {
   tag: RouteTag
   request: RouteRequestBody
   responses: Readonly<Record<number, HttpWireTypeName>>
+  bodiesThatARequestFieldSelects?: readonly HttpWireTypeName[]
 }
 
 export const HTTP_ROUTES: readonly HttpRouteDescription[] = [
@@ -63,10 +64,12 @@ export const HTTP_ROUTES: readonly HttpRouteDescription[] = [
     method: 'post',
     path: '/db/:id/query',
     operationId: 'query',
-    summary: 'Runs one read statement and returns its rows, on a server that accepts SQL.',
+    summary:
+      'Runs one read statement and returns its rows, on a server that accepts SQL. With shape set to columns, it returns a QueryColumnsResponse that holds each column and each row as an array, stopping at maxRows and maxBytes.',
     tag: 'Statements',
     request: 'QueryRequest',
     responses: { 200: 'QueryResponse' },
+    bodiesThatARequestFieldSelects: ['QueryColumnsResponse'],
   },
   {
     method: 'post',

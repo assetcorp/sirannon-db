@@ -1,3 +1,32 @@
+## 0.4.5 (2026-11-24)
+
+### 🚀 Features
+
+- **core:** add queryWithColumns with row and byte limits, and refuse single-quoted _sirannon table names ([5196e53](https://github.com/assetcorp/sirannon-db/commit/5196e53))
+- **server:** refuse column read fields on a named query message and check the column read vectors ([fa69282](https://github.com/assetcorp/sirannon-db/commit/fa69282))
+
+### 🩹 Fixes
+
+- require Node.js 22.16.0, the first release on which both SQLite drivers load and return every column ([f9afc72](https://github.com/assetcorp/sirannon-db/commit/f9afc72))
+- require Node.js 22.20.0, the first release whose node:sqlite binds numbered parameters ([b162271](https://github.com/assetcorp/sirannon-db/commit/b162271))
+- **client:** reject column integers outside SQLite range ([bc1b854](https://github.com/assetcorp/sirannon-db/commit/bc1b854))
+- **core:** refuse a single-quoted _sirannon name inside a parenthesised table list ([fd11839](https://github.com/assetcorp/sirannon-db/commit/fd11839))
+- **core:** guard grouped tables and window aliases ([730f5ee](https://github.com/assetcorp/sirannon-db/commit/730f5ee))
+- **core:** guard table lists with a with alias ([c28b8a2](https://github.com/assetcorp/sirannon-db/commit/c28b8a2))
+- **drivers:** refresh column details after statement execution ([9368717](https://github.com/assetcorp/sirannon-db/commit/9368717))
+- **drivers:** read node:sqlite rows again when Node.js 22 returns them narrower than their columns ([da52a84](https://github.com/assetcorp/sirannon-db/commit/da52a84))
+- **drivers:** step node:sqlite rows once where array reads keep a stale width, so no statement runs twice ([c1a8214](https://github.com/assetcorp/sirannon-db/commit/c1a8214))
+- **drivers:** step node:sqlite rows one at a time where all() keeps the column count from before a schema change ([3b8500f](https://github.com/assetcorp/sirannon-db/commit/3b8500f))
+- **drivers:** reset node sqlite iterators after failed reads ([8e16680](https://github.com/assetcorp/sirannon-db/commit/8e16680))
+- **go:** reject incomplete column query answers ([69e5604](https://github.com/assetcorp/sirannon-db/commit/69e5604))
+- **python:** require column query truncation in server answers ([ce69442](https://github.com/assetcorp/sirannon-db/commit/ce69442))
+- **server:** finish sending an HTTP answer before a graceful close ends its connection ([4c91826](https://github.com/assetcorp/sirannon-db/commit/4c91826))
+- **server:** drain early error answers during close ([7f590e0](https://github.com/assetcorp/sirannon-db/commit/7f590e0))
+
+### ❤️ Thank You
+
+- assetcorp @assetcorp
+
 ## 0.4.4 (2026-11-24)
 
 ### 🩹 Fixes

@@ -48,7 +48,7 @@ const WORDS_THAT_END_A_FROM_CLAUSE = new Set([
 
 const WORDS_THAT_OPEN_A_STATEMENT_BODY = new Set(['select', 'values', 'begin'])
 
-const WORDS_THAT_OPEN_A_SUBQUERY = new Set(['select', 'values', 'with'])
+const WORDS_THAT_OPEN_A_SUBQUERY = new Set(['select', 'values'])
 
 /**
  * Follows the tokens of one statement so that the SQL guard can tell where SQLite reads a single-quoted string as a
@@ -56,7 +56,7 @@ const WORDS_THAT_OPEN_A_SUBQUERY = new Set(['select', 'values', 'with'])
  * value can stand, such as after `FROM`, `JOIN`, `INTO`, `UPDATE`, `TABLE`, `IN`, or a `.`, and after the `,` that
  * separates two tables of a `FROM` clause. A `(` that opens where a table can stand in a `FROM` clause starts a
  * parenthesised list of tables, at any depth, so a string after that `(` or after a `,` inside it is a name too, until
- * a `SELECT`, `VALUES`, or `WITH` turns the parentheses into a subquery. A string stays a value wherever an expression
+ * a `SELECT` or `VALUES` turns the parentheses into a subquery. A string stays a value wherever an expression
  * can start, which is after an operator, any other `(`, and the keywords that introduce an expression.
  *
  * @internal

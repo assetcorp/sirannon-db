@@ -301,6 +301,7 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
 })
 
 const QUOTED_INTERNAL_TABLES = [
+  "SELECT * FROM (notes AS with, '_sirannon_meta')",
   "SELECT * FROM window, '_sirannon_meta'",
   "SELECT * FROM orders AS window, '_sirannon_meta'",
   "CREATE TABLE copied AS SELECT * FROM ('_sirannon_meta')",

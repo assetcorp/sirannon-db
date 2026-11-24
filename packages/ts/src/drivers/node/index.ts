@@ -11,6 +11,7 @@ import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { copyDatabaseWithNodeSqlite } from './copy.js'
+import { allReadsKeepStaleColumns, readAllRows } from './stale-columns.js'
 import { prepareStatement } from './statement-text.js'
 
 /**
@@ -83,6 +84,7 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
     async open(path, options) {
       refuseEncryptedOpen('node:sqlite', options)
       const { DatabaseSync } = await import('node:sqlite')
+      const stepEachRow = allReadsKeepStaleColumns(DatabaseSync)
       const db = new DatabaseSync(path, { readOnly: options?.readonly ?? false, allowExtension: true })
       db.enableLoadExtension?.(false)
       if (options?.walMode !== false) db.exec('PRAGMA journal_mode = WAL')
@@ -104,10 +106,10 @@ export function nodeSqlite(driverOptions?: NodeSqliteOptions): SQLiteDriver {
           const stmt = prepareStatement(db, sql)
           return {
             async all<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return narrowRowsIntegers(stmt.all(...(bindableParams(params) as Parameters<typeof stmt.all>)) as T[])
+              return narrowRowsIntegers(readAllRows(stmt, stepEachRow, bindableParams(params)) as T[])
             },
             async allRaw<T = unknown>(...params: unknown[]): Promise<T[]> {
-              return stmt.all(...(bindableParams(params) as Parameters<typeof stmt.all>)) as T[]
+              return readAllRows(stmt, stepEachRow, bindableParams(params)) as T[]
             },
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
               return narrowRowIntegers(

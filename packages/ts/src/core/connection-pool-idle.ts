@@ -1,3 +1,5 @@
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+
 /**
  * Calls a function once a pool has gone a set time without a read or a write, so that the pool can close the
  * connections that nobody uses.
@@ -51,7 +53,9 @@ export class ConnectionIdleClock {
 
   private arm(delayMs: number): void {
     if (this.timeoutMs === 0 || this.timer !== null || this.stopped) return
-    const timer = setTimeout(this.fire, delayMs) as ReturnType<typeof setTimeout> & { unref?: () => void }
+    const timer = setTimeout(this.fire, Math.min(delayMs, MAX_TIMER_DELAY_MS)) as ReturnType<typeof setTimeout> & {
+      unref?: () => void
+    }
     timer.unref?.()
     this.timer = timer
   }

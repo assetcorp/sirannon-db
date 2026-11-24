@@ -1,3 +1,14 @@
+## 0.4.4 (2026-11-24)
+
+### 🩹 Fixes
+
+- **core:** refuse a caller's transaction control and temporary objects with FORBIDDEN_SQL ([806a839](https://github.com/assetcorp/sirannon-db/commit/806a839))
+- **core:** read named parameters the way SQLite does so the guard sees the statement after them ([cbe8a4f](https://github.com/assetcorp/sirannon-db/commit/cbe8a4f))
+
+### ❤️ Thank You
+
+- assetcorp
+
 ## 0.4.3 (2026-11-22)
 
 ### 🚀 Features

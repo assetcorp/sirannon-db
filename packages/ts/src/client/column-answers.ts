@@ -5,6 +5,8 @@ import type { QueryColumnsResponse } from '../server/protocol.js'
 import { RemoteError } from './types.js'
 
 const COLUMNS_SHAPE = 'columns'
+const MAX_SQLITE_INTEGER = (1n << 63n) - 1n
+const MIN_SQLITE_INTEGER = -(1n << 63n)
 const COLUMN_DETAIL_FIELDS = ['declaredType', 'table', 'column', 'database'] as const
 /**
  * The message of the `TRANSPORT_ERROR` that a columns read raises on a transport without a columns read.
@@ -107,7 +109,13 @@ function decodedRow(row: unknown, width: number): unknown[] {
   if (!Array.isArray(row) || row.length !== width) throw new RemoteError('INVALID_RESPONSE', MALFORMED_ANSWER_MESSAGE)
   for (let index = 0; index < width; index++) {
     const cell = row[index]
-    if (cell !== null && typeof cell === 'object') row[index] = decodeTaggedValues(cell)
+    if (cell !== null && typeof cell === 'object') {
+      const decoded = decodeTaggedValues(cell)
+      if (typeof decoded === 'bigint' && (decoded < MIN_SQLITE_INTEGER || decoded > MAX_SQLITE_INTEGER)) {
+        throw new RemoteError('INVALID_RESPONSE', MALFORMED_ANSWER_MESSAGE)
+      }
+      row[index] = decoded
+    }
   }
   return row
 }

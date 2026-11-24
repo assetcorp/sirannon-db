@@ -4,7 +4,7 @@ Thanks for your interest in Sirannon. This guide covers how to set up the reposi
 
 ## Prerequisites
 
-- Install Node.js 22 or newer.
+- Install Node.js 22.16.0 or newer.
 - Use pnpm 11.8.0, which is the version pinned in `package.json`. Run `corepack enable`, and pnpm will match it.
 - Install Zig 0.16.0 on Linux and Windows. On macOS, install Xcode Command Line Tools for their C and C++ compilers.
 - Install `unzip`, and make it available on `PATH`.

@@ -4,7 +4,7 @@ In this self-contained Node.js example, one script uses the core features of Sir
 
 ## Setup
 
-To start this example, you need Node.js 22 or newer and pnpm.
+To start this example, you need Node.js 22.16.0 or newer and pnpm.
 
 The example imports `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 
@@ -36,13 +36,11 @@ To use Node's built-in SQLite driver, start it with this script:
 pnpm run start:node-native
 ```
 
-The Node native script passes `--experimental-sqlite` to Node before it loads the example.
-
 You can also pass the driver flag yourself:
 
 ```bash
 pnpm start -- --driver=better-sqlite3
-node --experimental-sqlite --import tsx src/main.ts --driver=node
+node --import tsx src/main.ts --driver=node
 ```
 
 The valid values for `--driver` are `better-sqlite3`, `better`, `node`, and `node-native`.

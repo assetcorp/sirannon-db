@@ -25,7 +25,7 @@ Then add the SQLite driver for your runtime:
 | Driver | Import | Runtime | Install |
 | --- | --- | --- | --- |
 | better-sqlite3 | `@delali/sirannon-db/driver/better-sqlite3` | Node.js | `pnpm add -E better-sqlite3` |
-| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22 | None (no flag needed from 22.13.0 and 23.4.0) |
+| Node built-in | `@delali/sirannon-db/driver/node` | Node.js >= 22.16.0 | None |
 | wa-sqlite | `@delali/sirannon-db/driver/wa-sqlite` | Browser (IndexedDB) | `pnpm add -E wa-sqlite` |
 | Bun | `@delali/sirannon-db/driver/bun` | Bun | None (built on `bun:sqlite`) |
 | Expo | `@delali/sirannon-db/driver/expo` | React Native | `pnpm add -E expo-sqlite` |
@@ -302,7 +302,7 @@ The wire formats, the value encodings, and the replication invariants that every
 
 | Example | Runtime | What it demonstrates |
 | --- | --- | --- |
-| [`node`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/node) | Node.js >= 22 | Schema, migrations, CRUD, transactions, CDC, live queries, pools, metrics, multi-tenant lifecycle, hooks, backup, and shutdown |
+| [`node`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/node) | Node.js >= 22.16.0 | Schema, migrations, CRUD, transactions, CDC, live queries, pools, metrics, multi-tenant lifecycle, hooks, backup, and shutdown |
 | [`web-wa-sqlite`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/web-wa-sqlite) | Browser and Node.js | Offline-first device sync with a local database in the browser, snapshot load, offline writes, conflict resolution, and a local live query |
 | [`web-client`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/web-client) | Browser and Node.js | Registered operations, code generation, remote live queries, and the React hooks |
 | [`distributed-entitlements`](https://github.com/assetcorp/sirannon-db/tree/main/packages/ts/examples/distributed-entitlements) | Node.js and browser | Three-node coordinator-backed replication over gRPC with etcd authority, mTLS, and Toxiproxy failure controls |

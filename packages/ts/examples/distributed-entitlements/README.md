@@ -40,7 +40,7 @@ Each node advertises its localhost HTTP endpoint through coordinator discovery. 
 
 ## Setup
 
-To start this example, you need Node.js 22 or newer, pnpm, and Docker with Compose.
+To start this example, you need Node.js 22.16.0 or newer, pnpm, and Docker with Compose.
 
 The dashboard imports `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 

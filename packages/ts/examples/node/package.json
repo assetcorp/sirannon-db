@@ -5,12 +5,12 @@
   "type": "module",
   "description": "Sirannon node example: the core features on either the better-sqlite3 driver or Node's built-in node:sqlite driver.",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.16.0"
   },
   "scripts": {
     "start": "tsx src/main.ts",
     "start:better-sqlite3": "tsx src/main.ts --driver=better-sqlite3",
-    "start:node-native": "node --experimental-sqlite --import tsx src/main.ts --driver=node",
+    "start:node-native": "node --import tsx src/main.ts --driver=node",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

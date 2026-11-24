@@ -4,7 +4,7 @@ This example is an inventory console in which every list on the page is a live q
 
 ## Setup
 
-To start this example, you need Node.js 22 or newer and pnpm.
+To start this example, you need Node.js 22.16.0 or newer and pnpm.
 
 The data server and the browser app both import `@delali/sirannon-db` from the workspace. That import resolves to files under `packages/ts/dist`, so build the package before you start anything. From the repository root:
 

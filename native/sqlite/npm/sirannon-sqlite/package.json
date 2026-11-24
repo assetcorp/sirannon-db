@@ -27,7 +27,7 @@
     "NOTICE"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.16.0"
   },
   "dependencies": {
     "@types/better-sqlite3": "7.6.13"

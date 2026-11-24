@@ -1,0 +1,39 @@
+{
+  "description": "Byte counts and stopping points of queryWithColumns. Every value counts 8 bytes, a TEXT value adds the length of its UTF-8 encoding, and a BLOB adds its length. Values use the tagged value encoding. The read applies maxRows before maxBytes.",
+  "valueBytes": [
+    { "value": null, "bytes": 8 },
+    { "value": 42, "bytes": 8 },
+    { "value": { "__sirannon_int": "9223372036854775807" }, "bytes": 8 },
+    { "value": 1.5, "bytes": 8 },
+    { "value": "", "bytes": 8 },
+    { "value": "abc", "bytes": 11 },
+    { "value": "é", "bytes": 10 },
+    { "value": "€", "bytes": 11 },
+    { "value": "😀", "bytes": 12 },
+    { "value": "\u0000", "bytes": 9 },
+    { "value": { "__sirannon_blob": "" }, "bytes": 8 },
+    { "value": { "__sirannon_blob": "00FF" }, "bytes": 10 }
+  ],
+  "truncation": {
+    "rows": [["abc"], ["abc"], ["abc"]],
+    "cases": [
+      { "limits": {}, "returned": 3, "truncated": null },
+      { "limits": { "maxRows": 0 }, "returned": 0, "truncated": "rows" },
+      { "limits": { "maxRows": 2 }, "returned": 2, "truncated": "rows" },
+      { "limits": { "maxRows": 3 }, "returned": 3, "truncated": null },
+      { "limits": { "maxBytes": 10 }, "returned": 0, "truncated": "bytes" },
+      { "limits": { "maxBytes": 21 }, "returned": 1, "truncated": "bytes" },
+      { "limits": { "maxBytes": 22 }, "returned": 2, "truncated": "bytes" },
+      { "limits": { "maxBytes": 33 }, "returned": 3, "truncated": null },
+      { "limits": { "maxRows": 0, "maxBytes": 0 }, "returned": 0, "truncated": "rows" },
+      { "limits": { "maxRows": 1, "maxBytes": 5 }, "returned": 0, "truncated": "bytes" },
+      { "limits": { "maxRows": 2, "maxBytes": 22 }, "returned": 2, "truncated": "rows" }
+    ]
+  },
+  "emptyResult": [
+    { "limits": { "maxRows": 0 }, "returned": 0, "truncated": null },
+    { "limits": { "maxBytes": 0 }, "returned": 0, "truncated": null }
+  ],
+  "validLimits": [0, 9007199254740991],
+  "invalidLimits": [-1, 1.5, 9007199254740992, "10", null, true]
+}

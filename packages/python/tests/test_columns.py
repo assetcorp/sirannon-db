@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Literal
 
@@ -106,6 +109,44 @@ def test_columns_read_and_query_refuse_a_quoted_reserved_table(
         with pytest.raises(SirannonError) as refused:
             database.query_with_columns(statement)
         assert refused.value.code == "FORBIDDEN_SQL"
+
         with pytest.raises(SirannonError) as refused:
             database.query(statement)
         assert refused.value.code == "FORBIDDEN_SQL"
+
+
+def test_columns_read_requires_an_explicit_truncation_from_the_server() -> None:
+    payload: dict[str, Any] = {"columns": [], "rows": []}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"capabilities":["query.sql"]}')
+
+        def do_POST(self) -> None:
+            self.rfile.read(int(self.headers.get("content-length", "0")))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps(payload).encode())
+
+        def log_message(self, format: str, *args: Any) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        with SirannonClient(f"http://127.0.0.1:{server.server_port}", transport="http") as client:
+            database = client.database("columns")
+            with pytest.raises(SirannonError) as refused:
+                database.query_with_columns("SELECT 1 WHERE 0")
+            assert refused.value.code == ErrorCodes.INVALID_RESPONSE
+            payload["truncated"] = None
+            answer = database.query_with_columns("SELECT 1 WHERE 0")
+            assert answer.rows == []
+            assert answer.truncated is None
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()

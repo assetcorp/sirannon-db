@@ -48,7 +48,12 @@ def columns_answer(payload: Any) -> QueryColumnsResponse:
         raise invalid_response(MALFORMED_ANSWER)
     columns = payload.get("columns")
     rows = payload.get("rows")
-    if not isinstance(columns, list) or not isinstance(rows, list) or payload.get("truncated") not in TRUNCATIONS:
+    if (
+        not isinstance(columns, list)
+        or not isinstance(rows, list)
+        or "truncated" not in payload
+        or payload["truncated"] not in TRUNCATIONS
+    ):
         raise invalid_response(MALFORMED_ANSWER)
     if not all(isinstance(row, list) and len(row) == len(columns) for row in rows):
         raise invalid_response(MALFORMED_ANSWER)

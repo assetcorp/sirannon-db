@@ -261,7 +261,8 @@ export async function createDatabaseRuntime(
     writes,
     reads: { pool, writerLock, observer },
     migrations,
-    loadExtension: extensionPath => writerLock.run(() => extensions.load(() => pool.connections(), extensionPath)),
+    loadExtension: extensionPath =>
+      writerLock.run(() => pool.whileConnectionsOpen(() => extensions.load(() => pool.connections(), extensionPath))),
   }
 }
 

@@ -1,4 +1,4 @@
-import { open, rename, rm } from 'node:fs/promises'
+import { open, rename, rm, stat } from 'node:fs/promises'
 import type { DatabaseFileSystem } from '../core/driver/file-system.js'
 
 const NO_SUCH_FILE_CODES: ReadonlySet<unknown> = new Set(['ENOENT', 'ENAMETOOLONG'])
@@ -13,6 +13,15 @@ function missingFile(err: unknown): boolean {
  * @internal
  */
 export const nodeDatabaseFiles: DatabaseFileSystem = {
+  async exists(path) {
+    try {
+      await stat(path)
+      return true
+    } catch (err) {
+      if (missingFile(err)) return false
+      throw err
+    }
+  },
   async readStart(path, length) {
     let handle: Awaited<ReturnType<typeof open>>
     try {

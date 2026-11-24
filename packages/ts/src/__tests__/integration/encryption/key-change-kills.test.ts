@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { restoreBackup } from '../../../backup/index.js'
@@ -182,6 +183,40 @@ describe.skipIf(binding === null)('a key change killed part way on the better-sq
     const rows = readWithIndependentAegis<LedgerRow>(restored, newKey, 'SELECT id, secret FROM ledger')
     expectEveryCommittedEntry(rows, committed)
     expect(rows.map(row => row.secret)).toContain(ENTRY_WRITTEN_AFTER_RECOVERY)
+  }, 90_000)
+
+  it.each([
+    { begun: 0, explanation: 'because the change stopped before the new file replaced the original' },
+    { begun: 1, explanation: 'either the key from before the change or the key from after it' },
+  ])('explains the key for a 0.4.5 marker left beside the original file with no new file, replacement begun $begun', async ({
+    begun,
+    explanation,
+  }) => {
+    const path = join(dir, 'ledger.db')
+    const db = await openWith(sirannon, path, oldKey)
+    await db.execute('CREATE TABLE ledger (id INTEGER PRIMARY KEY, secret TEXT NOT NULL)')
+    await db.execute('INSERT INTO ledger (id, secret) VALUES (1, ?)', [secretOf(1)])
+    await sirannon.close('ledger')
+    const marker = new DatabaseSync(`${path}.sirannon-key-change-marker`)
+    marker.exec('PRAGMA journal_mode = DELETE')
+    marker.exec(
+      'CREATE TABLE key_change_marker (identity TEXT NOT NULL, replacement_begun INTEGER NOT NULL, writes INTEGER NOT NULL)',
+    )
+    marker
+      .prepare('INSERT INTO key_change_marker VALUES (?, ?, 2)')
+      .run(Buffer.from(randomBytes(16)).toString('hex'), begun)
+    marker.close()
+
+    const refused = await openWith(sirannon, path, newKey).catch(err => err)
+    expect(refused).toMatchObject({ code: 'ENCRYPTION_KEY_REJECTED' })
+    expect(String(refused.message)).toContain(explanation)
+    expect(keyChangeLeftovers(dir)).toEqual([])
+
+    await openWith(sirannon, path, oldKey)
+    await sirannon.close('ledger')
+    expect(readWithIndependentAegis<LedgerRow>(path, oldKey, 'SELECT id, secret FROM ledger')).toEqual([
+      { id: 1, secret: secretOf(1) },
+    ])
   }, 90_000)
 
   it('fails to open and touches no file when the database file is missing before the replacement began', async () => {

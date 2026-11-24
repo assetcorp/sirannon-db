@@ -6,7 +6,7 @@ import { useFailoverEnvironment } from './gate-lifecycle.js'
 import { waitForStatus } from './gate-observations.js'
 import { itemRow, writeItemMajority } from './gate-public-api.js'
 import { startCluster } from './gate-scenarios.js'
-import { holdsThroughout, waitForCondition } from './gate-support.js'
+import { describeValue, holdsThroughout, waitForCondition } from './gate-support.js'
 
 describe('admissions in flight when a replica requests a full copy', () => {
   const environment = useFailoverEnvironment()
@@ -33,12 +33,20 @@ describe('admissions in flight when a replica requests a full copy', () => {
       nodeId: NODE_C,
       repairing: true,
     })
-    await waitForStatus(
-      requireNode(env, NODE_C),
-      status => status.syncState?.phase === 'syncing',
-      10_000,
-      'a requested copy',
-    )
+    const replica = requireNode(env, NODE_C)
+    try {
+      await waitForStatus(replica, status => status.syncState?.phase === 'syncing', 10_000, 'a requested copy')
+    } catch (err: unknown) {
+      const diagnostics = {
+        etcdGroup: await env.etcdOracle.group().catch(String),
+        replicaRejoin: await replica.rejoinState().catch(String),
+        primaryHeldInSyncUpdates: await primary.heldInSyncUpdates().catch(String),
+        primaryReceivedCopyRequests: await primary.copyTraffic('received', 'request', NODE_C).catch(String),
+      }
+      throw new Error(
+        `${err instanceof Error ? err.message : String(err)}\ndiagnostics=${describeValue(diagnostics)}\n${replica.logs()}`,
+      )
+    }
     await waitForCondition(
       async () => (await primary.copyTraffic('received', 'request', NODE_C)) > receivedRequests,
       10_000,

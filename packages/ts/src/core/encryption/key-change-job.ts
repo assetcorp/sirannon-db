@@ -192,8 +192,8 @@ export class KeyChangeRun {
 
   private async copySnapshot(): Promise<void> {
     const { pool, writerLock, fileConnections, path } = this.deps
-    await removeKeyChangeFile(this.files, path)
     await removeKeyChangeMarker(this.files, path)
+    await removeKeyChangeFile(this.files, path)
     const snapshot = await fileConnections.open({ walMode: false, walAutoCheckpoint: 0 })
     this.snapshot = snapshot
     this.nativePath = await readMainDatabasePath(snapshot)
@@ -325,7 +325,7 @@ export class KeyChangeRun {
 
   private async recoverFromFailedSwap(): Promise<void> {
     const { pool, path, keyring, cdc } = this.deps
-    if (!this.replaced && (await this.files.readStart(path, 1)) === null) {
+    if (!this.replaced && !(await this.files.exists(path))) {
       try {
         await this.files.rename(this.newPath, path)
         this.replaced = true
@@ -363,8 +363,9 @@ export class KeyChangeRun {
       })
       .catch(() => undefined)
     if (!this.replaced) {
-      await removeKeyChangeFile(this.files, path).catch(() => undefined)
-      await removeKeyChangeMarker(this.files, path).catch(() => undefined)
+      await removeKeyChangeMarker(this.files, path)
+        .then(() => removeKeyChangeFile(this.files, path))
+        .catch(() => undefined)
     }
     if (this.connectionsClosed) await fileConnections.reopenAfterReplacement()
     if (this.copiesPaused) backups.resumeCopies()

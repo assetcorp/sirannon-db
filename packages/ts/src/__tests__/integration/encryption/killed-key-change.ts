@@ -72,6 +72,7 @@ function watchConnection(conn: SQLiteConnection, path: string, point: KillPoint)
 function watchFiles(files: DatabaseFileSystem, dbPath: string, point: KillPoint): DatabaseFileSystem {
   let renamed = false
   return {
+    exists: path => files.exists(path),
     readStart: (path, length) => files.readStart(path, length),
     async remove(path) {
       await files.remove(path)

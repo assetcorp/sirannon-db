@@ -10,7 +10,21 @@
  */
 export interface DatabaseFileSystem {
   /**
+   * Returns whether a file exists, without opening it.
+   *
+   * Sirannon checks a database file, its marker, and its new file through this call while SQLite can hold any of them
+   * open in the same process. On a POSIX system, closing any descriptor on a file releases every lock that the process
+   * holds on that file, so the check must answer from the file's metadata, as `stat` does, and never open and close a
+   * descriptor.
+   *
+   * @param path - The file to look for.
+   * @returns `true` when the file exists.
+   */
+  exists(path: string): Promise<boolean>
+  /**
    * Returns the first bytes of a file, fewer when the file is shorter.
+   *
+   * Sirannon reads only a new file that a key change wrote, at a moment when no SQLite connection holds that file open.
    *
    * @param path - The file to read.
    * @param length - The most bytes to return.

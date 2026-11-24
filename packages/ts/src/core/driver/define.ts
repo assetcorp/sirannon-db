@@ -4,6 +4,7 @@ import type { SQLiteDriver } from './types.js'
 
 function boundFileSystem(files: DatabaseFileSystem): DatabaseFileSystem {
   return Object.freeze({
+    exists: files.exists.bind(files),
     readStart: files.readStart.bind(files),
     remove: files.remove.bind(files),
     rename: files.rename.bind(files),

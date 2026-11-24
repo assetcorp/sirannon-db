@@ -23,6 +23,8 @@ const MAX_JOB_PAGES = 5
 const REQUEST_TIMEOUT_MS = 30_000
 const REQUEST_ATTEMPTS = 3
 const RETRY_DELAY_MS = 2_000
+const LISTING_ATTEMPTS = 4
+const LISTING_RETRY_DELAY_MS = 5_000
 const API = process.env.GITHUB_API_URL ?? 'https://api.github.com'
 const REPOSITORY = process.env.GITHUB_REPOSITORY ?? ''
 
@@ -51,7 +53,9 @@ async function request(path) {
   }
 }
 
-async function pagesOf(path, field, limit, { newestOnly = false } = {}) {
+class ListingDisagreement extends Error {}
+
+async function pagesOnce(path, field, limit, newestOnly) {
   const entries = []
   const ids = new Set()
   let total = null
@@ -61,22 +65,34 @@ async function pagesOf(path, field, limit, { newestOnly = false } = {}) {
     if (!Array.isArray(body?.[field]) || !Number.isSafeInteger(body.total_count) || body.total_count < 0) {
       throw new Error(`the GitHub API returned an invalid ${field} page`)
     }
-    if (total !== null && total !== body.total_count) throw new Error(`${field} changed during pagination`)
+    if (total !== null && total !== body.total_count) {
+      throw new ListingDisagreement(`${field} changed during pagination`)
+    }
     total = body.total_count
     if (!newestOnly && total > limit * PER_PAGE) throw new Error(`${field} exceeds the lookup limit`)
     for (const entry of body[field]) {
-      if (!Number.isSafeInteger(entry?.id) || entry.id <= 0 || ids.has(entry.id)) {
-        throw new Error(`${field} holds an invalid or repeated ID`)
-      }
+      if (!Number.isSafeInteger(entry?.id) || entry.id <= 0) throw new Error(`${field} holds an invalid ID`)
+      if (ids.has(entry.id)) throw new ListingDisagreement(`${field} holds a repeated ID`)
       ids.add(entry.id)
       entries.push(entry)
     }
-    if (entries.length > total) throw new Error(`${field} lists more entries than it counts`)
+    if (entries.length > total) throw new ListingDisagreement(`${field} lists more entries than it counts`)
     if (entries.length === total) return entries
-    if (body[field].length !== PER_PAGE) throw new Error(`${field} lists fewer entries than it counts`)
+    if (body[field].length !== PER_PAGE) throw new ListingDisagreement(`${field} lists fewer entries than it counts`)
   }
   if (newestOnly) return entries
   throw new Error(`${field} exceeds the lookup limit`)
+}
+
+async function pagesOf(path, field, limit, { newestOnly = false } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await pagesOnce(path, field, limit, newestOnly)
+    } catch (error) {
+      if (!(error instanceof ListingDisagreement) || attempt >= LISTING_ATTEMPTS) throw error
+      await new Promise(resolve => setTimeout(resolve, LISTING_RETRY_DELAY_MS * attempt))
+    }
+  }
 }
 
 function trustedRun(run, workflow) {

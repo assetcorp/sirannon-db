@@ -17,6 +17,7 @@ export class PruneSchedule {
   private dueAt: number | null = null
   private lastPrunedAt = performance.now()
   private timer: ReturnType<typeof setTimeout> | null = null
+  private paused = false
   private readonly cadenceMs: number
 
   /**
@@ -62,11 +63,13 @@ export class PruneSchedule {
 
   /** Arms the timer again for a prune that is due, after {@link PruneSchedule.pause}. */
   resume(): void {
+    this.paused = false
     if (this.dueAt !== null) this.arm()
   }
 
-  /** Cancels the timer, and keeps the due prune for {@link PruneSchedule.resume}. */
+  /** Cancels the timer, and keeps every prune that is due or asked for until {@link PruneSchedule.resume}. */
   pause(): void {
+    this.paused = true
     this.clearTimer()
   }
 
@@ -79,7 +82,7 @@ export class PruneSchedule {
   private arm(): void {
     this.clearTimer()
     const dueAt = this.dueAt
-    if (dueAt === null) return
+    if (dueAt === null || this.paused) return
     const delay = Math.min(MAX_TIMER_DELAY_MS, Math.max(0, dueAt - performance.now()))
     const timer = setTimeout(this.fire, delay) as ReturnType<typeof setTimeout> & { unref?: () => void }
     timer.unref?.()

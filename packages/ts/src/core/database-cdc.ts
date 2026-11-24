@@ -48,6 +48,8 @@ export class DatabaseCdcController {
   private subscriptionManager: SubscriptionManager | null = null
   private liveConnRequest: Promise<SQLiteConnection> | null = null
   private feed: ChangeFeed | null = null
+  private feedSettling: Promise<void> | null = null
+  private startsWhenFeedSettles = false
   private stamper: SyncStamper | null = null
   private epochRequest: Promise<string> | null = null
   private readonly liveConnectionListeners = new Set<() => void>()
@@ -276,10 +278,19 @@ export class DatabaseCdcController {
   }
 
   stop(): void {
-    if (this.feed) {
-      this.feed.stop()
-      this.feed = null
-    }
+    this.startsWhenFeedSettles = false
+    const feed = this.feed
+    if (feed === null) return
+    this.feed = null
+    feed.stop()
+    const settling = feed.settled().then(() => {
+      if (this.feedSettling !== settling) return
+      this.feedSettling = null
+      if (!this.startsWhenFeedSettles) return
+      this.startsWhenFeedSettles = false
+      this.ensurePolling()
+    })
+    this.feedSettling = settling
   }
 
   private ensure(): { tracker: ChangeTracker; subscriptions: SubscriptionManager } {
@@ -292,6 +303,10 @@ export class DatabaseCdcController {
 
   private ensurePolling(): void {
     if (this.feed) return
+    if (this.feedSettling !== null) {
+      this.startsWhenFeedSettles = true
+      return
+    }
     const tracker = this.tracker
     const manager = this.subscriptionManager
     if (!tracker || !manager) return

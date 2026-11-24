@@ -540,6 +540,7 @@ export class ConnectionPool {
     releaseReader(): void;
     reopen(): Promise<void>;
     get suspended(): boolean;
+    whileConnectionsOpen<T>(operation: () => Promise<T>): Promise<T>;
     withReader<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
     writerReady(): Promise<void> | null;
 }

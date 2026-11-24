@@ -75,7 +75,7 @@ export function vfsLibrarySegments(platform: string, muslLibc: boolean): string[
 
 /**
  * Returns the name of the package that ships the compiled extension for one
- * platform and architecture. Each pair has its own package, which declares its
+ * platform and architecture. Each pair has a separate package, which declares its
  * `os` and `cpu` fields.
  *
  * @param platform - The platform name, in the form of `process.platform`.

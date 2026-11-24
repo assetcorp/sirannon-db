@@ -71,7 +71,7 @@ export class StatementRecorder implements StatementMeter {
   /**
    * Returns the summed row counts of every recorded statement, for a statement that executed once for each parameter set and failed.
    *
-   * @param error - The error that the transaction raised, whose own counts Sirannon reports when the recorder holds no statement.
+   * @param error - The error that the transaction raised, whose counts Sirannon reports when the recorder holds no statement.
    * @param measureFailure - Returns the outcome of an error that no recorded statement raised.
    * @returns The total counts, or the unknown outcome when any statement's outcome is unknown.
    */

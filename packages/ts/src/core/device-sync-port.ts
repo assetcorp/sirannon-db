@@ -25,7 +25,7 @@ export interface DeviceSyncPullState {
  * @public
  */
 export interface DeviceSyncPort {
-  /** Returns the node identifier that this device stamps on its own changes. */
+  /** Returns the node identifier that this device stamps on the changes that it writes. */
   identity(): Promise<{ nodeId: string }>
   /** Applies one pulled transaction and advances the pull cursor in the same write. */
   applyPulledTransaction(

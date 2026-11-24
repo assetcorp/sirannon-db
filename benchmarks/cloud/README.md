@@ -23,14 +23,14 @@ Select the cloud with `PROVIDER` (default `gcp`). Each default is a dedicated-vC
 | `digitalocean` | `doctl` | `gd-8vcpu-32gb` (Premium) | root disk | `root` |
 | `aws` | `aws` | `m6id.2xlarge` (Ice Lake) | bundled, 474 GB | `ubuntu` |
 
-AWS runs on Ice Lake because no current x86 general-purpose instance pairs Sapphire Rapids with a local NVMe instance store; each result records its CPU. Check each provider's own pricing page for the current rate.
+AWS runs on Ice Lake because no current x86 general-purpose instance pairs Sapphire Rapids with a local NVMe instance store; each result records its CPU. Check the pricing page of each provider for the current rate.
 
 The load VM needs no local NVMe, so GCP uses `c3-standard-8` and AWS uses `m6i.2xlarge`, which have the same CPU generation and size as the engine VM. Hetzner and DigitalOcean use the engine VM's type. `LOAD_MACHINE_TYPE` overrides the default, and the load VM's name is `VM_NAME-load` unless `LOAD_VM_NAME` is set.
 
 ## Prerequisites
 
 - Authenticate the provider's CLI: run `gcloud auth login` and set a project, `hcloud context create` or export `HCLOUD_TOKEN`, `doctl auth init`, or `aws configure`.
-- Create an SSH key pair for Hetzner, DigitalOcean, and AWS. The toolkit uses `~/.ssh/id_ed25519` or `~/.ssh/id_rsa`, and `SSH_KEY` points it at another. GCP manages its own keys.
+- Create an SSH key pair for Hetzner, DigitalOcean, and AWS. The toolkit uses `~/.ssh/id_ed25519` or `~/.ssh/id_rsa`, and `SSH_KEY` points it at another. GCP manages the keys through `gcloud`.
 
 ## Dry run
 
@@ -50,7 +50,7 @@ PROVIDER=hetzner BENCH_DATA_SIZE=10000 BENCH_WORKLOADS=point-select BENCH_TARGET
 
 ## Individual steps
 
-`all` runs `up`, `sync`, `setup`, `run`, and `fetch` in order. Run any one on its own while iterating:
+`all` runs `up`, `sync`, `setup`, `run`, and `fetch` in order. Run any one alone while iterating:
 
 ```bash
 PROVIDER=gcp ./run-cloud.sh up        # create both VMs and the network between them
@@ -100,14 +100,14 @@ Provider-specific variables: `GCP_PROJECT`, `GCP_ZONE`, `GCP_NETWORK`, `MIN_CPU_
 
 ## What each provider sets up
 
-- **GCP** connects through `gcloud`, so it manages keys. It tags both VMs and adds a firewall rule, `VM_NAME-between-vms`, that opens TCP ports 22, 5432, 9876, and 9877 between the tagged VMs on `GCP_NETWORK` (default `default`). Set `USE_IAP=1` to reach the VMs through IAP with no public IP. A network other than `default` needs its own rule that allows TCP port 22 from your machine, or from `35.235.240.0/20` with `USE_IAP=1`, since [Google's IAP TCP forwarding](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding) connects from that range.
+- **GCP** connects through `gcloud`, so it manages keys. It tags both VMs and adds a firewall rule, `VM_NAME-between-vms`, that opens TCP ports 22, 5432, 9876, and 9877 between the tagged VMs on `GCP_NETWORK` (default `default`). Set `USE_IAP=1` to reach the VMs through IAP with no public IP. A network other than `default` needs a separate rule that allows TCP port 22 from your machine, or from `35.235.240.0/20` with `USE_IAP=1`, since [Google's IAP TCP forwarding](https://docs.cloud.google.com/iap/docs/using-tcp-forwarding) connects from that range.
 - **Hetzner** registers your public key, creates a private network `VM_NAME-net` on 10.77.0.0/16, attaches both servers to it, and connects as `root` over each server's public IP. `down` deletes the network after the servers.
 - **DigitalOcean** registers your public key, creates both droplets in the region's default VPC, which connects them privately, and connects as `root` over each droplet's public IP.
-- **AWS** imports your key pair, creates a security group that allows SSH only from your current public IP and every TCP port between its own members, resolves the latest Ubuntu 24.04 AMI from Canonical, puts the load VM in the engine VM's subnet, tags the instances by name, and connects as `ubuntu`. It assumes a default VPC with a default subnet; set `AWS_SUBNET` if you have neither.
+- **AWS** imports your key pair, creates a security group that allows SSH only from your current public IP and every TCP port between its members, resolves the latest Ubuntu 24.04 AMI from Canonical, puts the load VM in the engine VM's subnet, tags the instances by name, and connects as `ubuntu`. It assumes a default VPC with a default subnet; set `AWS_SUBNET` if you have neither.
 
 ## Security
 
-Hetzner and DigitalOcean expose port 22 on a public IP, so treat the VM as throwaway and always tear it down. AWS restricts port 22 to your own IP through the security group it creates. GCP with `USE_IAP=1` opens no public IP at all.
+Hetzner and DigitalOcean expose port 22 on a public IP, so treat the VM as throwaway and always tear it down. AWS restricts port 22 to your IP through the security group it creates. GCP with `USE_IAP=1` opens no public IP at all.
 
 ## Self-delete backstop
 

@@ -34,7 +34,7 @@ import { unrefTimer } from './timers.js'
 export class TermHistory {
   /** Is true once the engine has finished starting, so that no reconciliation begins while startup picks the sync phase. */
   active = false
-  /** Holds the primary term whose history this node last reconciled its own with, or null before the first time. */
+  /** Holds the primary term whose history this node last reconciled its history with, or null before the first time. */
   anchoredTerm: bigint | null = null
   /** Is true when this node held primary authority in its reconciled term, so that it reconciles only once the group moves to a later term. */
   heldPrimaryInAnchoredTerm = false

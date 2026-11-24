@@ -6,7 +6,7 @@ Sirannon keeps an encrypted database, its log, and its backups as ciphertext und
 
 - **One pass over each page.** AEGIS-256 is an authenticated cipher built on the AES round function, so it encrypts a page and computes its 32-byte tag in one pass and uses the processor's AES instructions where they exist. SQLCipher 4 encrypts each page with AES-256 in CBC mode and then computes an HMAC-SHA512 over it, which is a second pass over the same bytes. On an x86-64 machine with AES instructions and with `synchronous = NORMAL`, the median insert took 14.1 µs under AEGIS-256 and 35.8 µs under SQLCipher 4, against 11.0 µs on a plaintext database, and the median transaction of 1,000 inserts took 2,123 µs under AEGIS-256 and 5,653 µs under SQLCipher 4, against 2,328 µs on plaintext. Each figure is the median of five runs, which alternated their order on one pinned core.
 - **No cryptographic library outside the module.** SQLite3 Multiple Ciphers compiles its cipher code into the native module. A SQLCipher build for Node has to call a library for AES and HMAC: on Linux and Windows, that library is the OpenSSL inside the running Node process, which ties the module to the OpenSSL symbols that each Node release exports, and on macOS it is CommonCrypto.
-- **The same build serves plaintext databases.** SQLite3 Multiple Ciphers passes the pages of an unencrypted database through unchanged, so a database opened without a key behaves as it does under better-sqlite3's own SQLite.
+- **The same build serves plaintext databases.** SQLite3 Multiple Ciphers passes the pages of an unencrypted database through unchanged, so a database opened without a key behaves as it does under the SQLite that better-sqlite3 bundles.
 
 ## Why SQLCipher on Expo
 

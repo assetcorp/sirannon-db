@@ -51,7 +51,7 @@ export function effectiveTopologyRole(engine: ReplicationEngine): TopologyRole {
  * engine holds a state with a higher version, and it passes only a state that names such a primary to the engine's
  * demotion handler.
  *
- * The group watch, a session restore, and every refresh call this function, so that the node notices its own demotion
+ * The group watch, a session restore, and every refresh call this function, so that the node notices its demotion
  * whichever of those reads returns the later term first. Those reads can return in any order, and the version check
  * keeps a reply that the coordinator sent before a later write from replacing the state that the write produced.
  *

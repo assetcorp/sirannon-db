@@ -1,7 +1,7 @@
 import { ExtensionError, SirannonError } from '../errors.js'
 
 /**
- * Calls the runtime's own extension loading function and rethrows any failure
+ * Calls the extension loading function that the runtime provides and rethrows any failure
  * as an {@link ExtensionError}, so that every driver throws the same error type
  * when an extension fails to load. A `SirannonError` from the runtime
  * propagates unchanged.

@@ -6,7 +6,7 @@ import type { WSWireChangeEvent } from './ws-server-messages.js'
 /**
  * The target size of one packed `changes` frame. The packer adds events to a
  * frame until the next one would take it past this size, and it sends an event
- * larger than the whole target in a frame of its own. At 64 KiB, a frame is
+ * larger than the whole target in a separate frame. At 64 KiB, a frame is
  * 1/16 of the default 1 MiB `maxBodyBytes` and 1/256 of the default 16 MiB
  * backpressure limit, while a full delivery window of 1,000 ordinary changes
  * still spans several frames.
@@ -21,7 +21,7 @@ const FRAMES_PER_RESUME_THRESHOLD = 2
  *
  * A stream sends a frame only while its socket buffers less than that resume count, which is half of
  * `maxWebSocketBackpressureBytes`. A frame of at most a quarter of the bound therefore leaves the buffer under the
- * bound, so that the stream never closes its own connection with close code 4290.
+ * bound, so that the stream never closes its connection with close code 4290.
  *
  * @param socketResumeBytes - The buffered byte count below which a paused stream resumes sending.
  * @returns The size in bytes at which the packer sends a frame.

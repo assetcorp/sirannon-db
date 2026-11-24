@@ -239,7 +239,7 @@ export async function selectMaxAssignedChangeSeq(
  *
  * @param conn - The connection to read the change log through.
  * @param tableName - The change log table.
- * @param nodeId - The node whose own changes to consider.
+ * @param nodeId - The node whose changes to consider.
  * @returns That sequence, or zero when the log holds no change from that node.
  * @internal
  */

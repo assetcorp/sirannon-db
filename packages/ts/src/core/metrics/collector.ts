@@ -22,7 +22,7 @@ export type LateOutcomeMeasure = (
 ) => QueryOutcome
 
 /**
- * Returns the known outcome with the late row counts added to its own, or the known outcome unchanged when the late
+ * Returns the known outcome with the late row counts added to the counts that it holds, or the known outcome unchanged when the late
  * counts never arrived.
  *
  * @param known - The outcome known when the caller received its error.

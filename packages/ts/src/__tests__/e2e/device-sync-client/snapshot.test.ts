@@ -217,7 +217,7 @@ describe('a device whose snapshot download fails', () => {
     await second.start()
     expect(announced).toEqual(['resync'])
 
-    await eventually(() => resumed.length === 1, 'the copy that the start schedules on its own')
+    await eventually(() => resumed.length === 1, 'the copy that the start schedules with no call from the caller')
     expect(resumed).toEqual([USABLE])
     expect(sameRows(server.path, device.path, 'notes')).toBe(true)
     expect((await second.status()).resyncRequired).toBe(false)

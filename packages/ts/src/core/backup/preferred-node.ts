@@ -30,8 +30,8 @@ export interface BackupGroupMembership {
  * every turn, as a single-node deployment needs.
  *
  * `coordinatorBackupGroup` in the replication entry point builds a group source
- * from a cluster coordinator. Write your own where another system holds the
- * membership.
+ * from a cluster coordinator. Where another system holds the membership, write a
+ * group source that reads it from that system.
  *
  * @public
  */

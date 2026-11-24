@@ -131,7 +131,7 @@ export async function insertRolledBackChangesAfterHlc(
  * @param conn - The writer connection.
  * @param changesTable - The change log table.
  * @param origins - The IDs of the group members whose changes form the history.
- * @param primaryNodeId - The current primary's node ID, whose own changes the primary holds.
+ * @param primaryNodeId - The current primary's node ID, whose changes this function leaves out because the primary holds them.
  * @param term - The primary term of the full copy that follows.
  * @param nowSeconds - The time to record, in seconds since the Unix epoch.
  * @returns A promise that settles once SQLite has copied the changes, at once when `origins` is empty.

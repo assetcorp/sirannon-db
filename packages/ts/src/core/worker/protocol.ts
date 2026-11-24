@@ -79,7 +79,7 @@ const KINDS_THAT_CARRY_BEGIN = new Set<WorkerRequestKinds['kind']>([
 
 /**
  * Returns whether a request of this kind can carry the `BEGIN` of the transaction that the host has opened, which
- * the worker executes just before the request, so that the transaction costs no round trip of its own.
+ * the worker executes just before the request, so that the transaction needs no separate round trip.
  *
  * @param kind - The request's kind.
  * @returns `true` for a statement request, and `false` for the requests that manage the worker or run a group.

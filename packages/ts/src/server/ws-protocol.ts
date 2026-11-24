@@ -50,7 +50,7 @@ export interface WSSubscribeMessage {
   /**
    * The `epoch` that the server reported with this cursor. A `sinceSeq` is valid
    * only within the sequence space that produced it, so when this epoch differs
-   * from the server's own, the server answers with `resync: true` and skips the
+   * from the server's current epoch, the server answers with `resync: true` and skips the
    * replay.
    */
   epoch?: string

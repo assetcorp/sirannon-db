@@ -35,7 +35,7 @@ export function OnboardingScreen({ rejectedName, onPick }: { rejectedName?: stri
             <CardDescription>
               {browserOnly
                 ? 'This browser stores the work orders for this device in a SQLite database. Every order that you claim shows this name.'
-                : 'Each device has its own SQLite database in this browser, which the app syncs with the server. When you open this page in a second tab under a different name, that tab becomes a second device.'}
+                : 'Each device has a separate SQLite database in this browser, which the app syncs with the server. When you open this page in a second tab under a different name, that tab becomes a second device.'}
             </CardDescription>
           </CardHeader>
           <CardContent>

@@ -22,12 +22,12 @@ function transport(config: Config): 'loopback' | 'network' {
 
 const LOOPBACK_NOTE =
   'Both engines and the load driver run as native processes on one host with no network between the ' +
-  'load driver and the server. The engine under test is pinned to its own CPU cores under a hard ' +
+  'load driver and the server. The engine under test is pinned to dedicated CPU cores under a hard ' +
   'memory ceiling (cgroup v2), and the load driver runs on disjoint pinned cores with no memory cap, ' +
   'so it never competes with the engine under test.'
 
 const NETWORK_NOTE =
-  'The load driver runs on its own machine and reaches the engine over the private network between ' +
+  'The load driver runs on a separate machine and reaches the engine over the private network between ' +
   'the two machines, so every request crosses that network. The engine under test runs as a native ' +
   'process under a hard memory ceiling (cgroup v2) with every CPU of its machine, and it shares that ' +
   'machine with nothing but the harness.'
@@ -105,7 +105,7 @@ export function clientSaturationBlock(
       'workload returning real rows costs the client more per operation, so its true ceiling is ' +
       'lower than this figure by an amount the probe cannot measure. Read it as an upper bound on ' +
       "the client only: a workload reaching this rate is at the client's limit, while a workload " +
-      'falling below it proves nothing on its own. Whether the server saturated is decided per rate ' +
+      'falling below it proves nothing alone. Whether the server saturated is decided per rate ' +
       "from the generator's in-flight occupancy, not from this number, and headroom_factor is " +
       'therefore an optimistic bound rather than proof of headroom. Occupancy in turn shows that the ' +
       'generator was waiting on replies rather than failing to send them; separating a server too ' +

@@ -187,7 +187,7 @@ export interface WriterWorkerOptions {
   maxPendingWrites?: number
   /** The deadline for each operation, in milliseconds; the default is 30000, and 0 turns it off. At the deadline, Sirannon asks the worker to cancel the operation, and when the worker gives no answer within a second deadline, Sirannon rejects the caller's promise while the worker continues, so the outcome of that write is unknown. */
   writeTimeoutMs?: number
-  /** How many times Sirannon restarts the worker after the worker crashes on its own, before writes fail permanently; the default is 5. */
+  /** How many times Sirannon restarts the worker after the worker stops without Sirannon asking it to, before writes fail permanently; the default is 5. */
   maxRestarts?: number
 }
 

@@ -14,7 +14,7 @@ In coordinator mode, a former primary that returned with writes that no other vo
 - In the same transaction it copies each undone change into `_sirannon_rolled_back_changes`. A copy in a system table commits with the undo and stays encrypted with the rest of the file, whereas a separate file next to the database would do neither.
 - A node keeps its rows until it has kept every change that the primary can lack, and only then starts a full copy. Before a repair copy, it asks the primary where their histories meet, as a former primary does, and keeps every change after that point. A primary records that its file holds a complete copy, so that it keeps its rows when it restarts as a replica.
 - When the primary no longer keeps the history to compare against, the node keeps every change that the primary did not write and marks those copies as not compared. MongoDB discards a stale member's data when an operator resyncs it, so this keeps more than MongoDB does.
-- A faulted node, and a repairing node that has not finished its copy, apply no batch, so that the changes that they keep hold only their own history.
+- A faulted node, and a repairing node that has not finished its copy, apply no batch, so that the changes that each of them keeps come only from that node's history.
 - `rolledBackChanges(engine)` returns the kept changes and `clearRolledBackChanges(engine)` deletes them, and both are named exports of `@delali/sirannon-db/replication`, so that a bundler drops them when the caller imports neither.
 - An operator can still mark a node faulted, which keeps the quarantine rules for that node.
 

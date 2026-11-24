@@ -81,7 +81,7 @@ export async function prepare(driver: Driver, workload: Workload, config: Config
     rows_per_second: seconds > 0 ? counter.rows / seconds : 0,
     engine_cpu: engineCpuBlock([seedCores], config.engineCpus),
     note:
-      'Seeding is disclosed, never compared: each engine loads through its own fastest documented ' +
-      'path, and Sirannon seeds with durability off while PostgreSQL seeds inside one transaction.',
+      'Seeding is disclosed, never compared: each engine loads through the fastest path that its ' +
+      'documentation describes, and Sirannon seeds with durability off while PostgreSQL seeds inside one transaction.',
   }
 }

@@ -83,7 +83,7 @@ def soak_block(source: Source, chart_dir: str) -> str:
         "least 95% of the rate across the whole window, with under 1% errors and a p99 at or under the "
         "service-level target. An engine that keeps the rate with a p99 above the target therefore counts as a "
         "miss. Bold marks the higher achieved rate of the two engines on each workload. Where one engine held "
-        "and the other missed, bold also marks the engine that held. Since each engine served its own operating "
-        "point during the window, neither latency column is bold."
+        "and the other missed, bold also marks the engine that held. Since the two engines served separate operating "
+        "points during the window, neither latency column is bold."
     )
     return "\n\n".join([intro, *parts])

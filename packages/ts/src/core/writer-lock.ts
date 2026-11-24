@@ -9,7 +9,7 @@ const UNTRACKED: WriterContext = {
 
 /**
  * The code of the error that a call through the database raises when it needs the writer while a transaction
- * callback holds it, on a driver that has no async context to tell the callback's own calls from other callers.
+ * callback holds it, on a driver that has no async context to tell the calls that the callback makes from the calls of other callers.
  *
  * @internal
  */

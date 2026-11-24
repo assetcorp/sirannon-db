@@ -132,7 +132,7 @@ export interface CompareAndAdvancePrimaryTermResult {
 /**
  * Describes a new in-sync set for the group, and optionally a new durability point. To add a node, call
  * {@link ClusterCoordinator.admitNodeToInSyncSet}, because this update throws a `RangeError` for any node outside the
- * current set. A primary names its term and its own node ID in the update, so that the coordinator applies the update
+ * current set. A primary puts its term and its node ID in the update, so that the coordinator applies the update
  * only while that node is still the primary in that term.
  *
  * @public

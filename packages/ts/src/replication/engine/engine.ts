@@ -313,7 +313,7 @@ export class ReplicationEngine extends EventEmitter {
    * Executes a fixed list of statements in one transaction on this node, or forwards them to the primary, which
    * executes them in one transaction, when this node cannot accept writes and `writeForwarding` is on.
    *
-   * @param statements - The statements to execute, in order, each with its own parameters.
+   * @param statements - The statements to execute, in order, each with its parameters.
    * @param options - The write concern for the transaction, which the primary also applies to forwarded statements before it answers.
    * @returns One result per statement, in order.
    */
@@ -340,7 +340,7 @@ export class ReplicationEngine extends EventEmitter {
    * Sends the statements to the primary, which executes them in one transaction, and returns the primary's result.
    * When this node is the primary, it executes them here in the same way.
    *
-   * @param statements - The statements to execute, in order, each with its own parameters.
+   * @param statements - The statements to execute, in order, each with its parameters.
    * @param options - The write concern that the primary applies to the statements before it answers.
    * @returns The result of each statement, in order, and the request ID.
    */

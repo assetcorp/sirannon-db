@@ -1,6 +1,6 @@
 # A majority write waits for the in-sync set, and the primary alone changes that set
 
-In coordinator mode, the primary used to record every `majority` write in etcd before it acknowledged the write. Each record replaced the in-sync set with the voters that had acknowledged that one write, so under concurrent load a voter that was a few milliseconds behind left the set and rejoined it on the next write. In a three-voter drill, between 27 and 43 of 5,400 writes that a majority already held came back failed with `COORDINATOR_UNAVAILABLE`, and a write sent on its own cost two etcd transactions. This decision moves Sirannon to the model that Kafka uses for its in-sync replicas, and `packages/spec/09-failover.md` carries the rules.
+In coordinator mode, the primary used to record every `majority` write in etcd before it acknowledged the write. Each record replaced the in-sync set with the voters that had acknowledged that one write, so under concurrent load a voter that was a few milliseconds behind left the set and rejoined it on the next write. In a three-voter drill, between 27 and 43 of 5,400 writes that a majority already held came back failed with `COORDINATOR_UNAVAILABLE`, and a write sent alone cost two etcd transactions. This decision moves Sirannon to the model that Kafka uses for its in-sync replicas, and `packages/spec/09-failover.md` carries the rules.
 
 ## Why this over the alternatives
 

@@ -153,7 +153,7 @@ def throughput_block(source: Source, chart_dir: str) -> str:
     note = (
         "_Bold marks the higher of the two operating points on each workload, counting only the engines that held "
         "the target. Where both engines held the target "
-        "at the same rate, neither cell is bold. Each p99 comes from its own engine's operating point, so the two "
+        "at the same rate, neither cell is bold. Each p99 comes from the operating point of the engine that it describes, so the two "
         "p99 columns can describe different offered rates. For both engines at one offered rate, use the sweep "
         "tables below. Each 'missed at' column gives the next offered rate above the operating point at which "
         "that engine missed the target, with its p99 at that rate._\n\n"

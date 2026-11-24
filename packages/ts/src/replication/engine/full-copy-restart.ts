@@ -37,7 +37,7 @@ async function currentGroupState(engine: ReplicationEngine): Promise<Replication
  * node waits for a later read before it starts the copy.
  *
  * @param engine - The node's engine.
- * @returns True for a copy that the node's own history requires, and for a rebuild whose flag the group still holds.
+ * @returns True for a copy that the node's history requires, and for a rebuild whose flag the group still holds.
  *
  * @internal
  */

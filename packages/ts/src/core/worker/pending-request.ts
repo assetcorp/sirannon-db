@@ -53,7 +53,7 @@ export function unresponsiveError(waitedMs: number, kind?: WorkerRequestBody['ki
  * @param entry - The request.
  * @param error - The error that the worker sent.
  * @returns `WRITE_OVERLOADED` for a request that the worker dropped before it began, the unresponsive error for a
- * stopped copy, and the worker's own error otherwise.
+ * stopped copy, and the error that the worker sent otherwise.
  * @internal
  */
 export function failedReplyError(entry: PendingRequest, error: SerializedError): Error {

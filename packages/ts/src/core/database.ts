@@ -152,7 +152,7 @@ export class Database extends DatabaseColumnQueries {
    * transaction. Whether the load succeeds or fails, Sirannon restores the
    * configured level before this method resolves. The result contains totals
    * for the whole load, so that a large load keeps no per-row results in memory.
-   * A load commits in a transaction of its own, so inside a
+   * A load commits in a separate transaction, so inside a
    * {@link Database.transaction} callback this method fails with
    * `BULK_LOAD_IN_TRANSACTION`, and {@link Transaction.executeBatch} writes the
    * rows inside that transaction instead.
@@ -176,11 +176,11 @@ export class Database extends DatabaseColumnQueries {
    *
    * When every statement is an INSERT, UPDATE, DELETE, or REPLACE, Sirannon
    * groups the transaction with other writes into one commit, and otherwise it
-   * executes the transaction on its own. This method takes the statements up
+   * commits the transaction alone. This method takes the statements up
    * front, because a group commit that waited on a caller's callback would delay
    * every other transaction in the group.
    *
-   * @param statements - The statements to execute, in order, each with its own parameters.
+   * @param statements - The statements to execute, in order, each with its parameters.
    * @returns One result per statement, in order.
    */
   async executeTransaction(statements: readonly { sql: string; params?: Params }[]): Promise<ExecuteResult[]> {
@@ -197,9 +197,9 @@ export class Database extends DatabaseColumnQueries {
    * {@link Database.executeBatch}, {@link Database.executeTransaction}, or this
    * method, becomes part of the same transaction. Sirannon executes each batch,
    * statement list, and nested function inside a savepoint, so that one that
-   * fails rolls back only its own writes. The wa-sqlite and Expo drivers have
-   * no async context to tell the function's own calls from another caller's,
-   * and they read through the writer connection. On those drivers, while the
+   * fails rolls back only the writes that it made. The wa-sqlite and Expo drivers
+   * have no async context to tell the calls that the function makes from another
+   * caller's, and they read through the writer connection. On those drivers, while the
    * function holds the writer, every call through this database that needs
    * the writer fails at once with `WRITER_HELD_BY_CALLBACK`, whoever makes it.
    * The refusal applies to reads, writes, migrations, backups,
@@ -254,7 +254,7 @@ export class Database extends DatabaseColumnQueries {
   }
 
   /**
-   * Keeps the change-log entries that a component outside this database still needs, such as the changes that the replication engine's peers have yet to acknowledge, out of reach of this database's own pruning.
+   * Keeps the change-log entries that a component outside this database still needs, such as the changes that the replication engine's peers have yet to acknowledge, out of reach of this database's pruning.
    *
    * @param source - The component that holds the entries back.
    * @param seq - The highest change-log sequence that pruning can remove for this component, or `null` to release the hold.

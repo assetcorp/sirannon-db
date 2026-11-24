@@ -11,5 +11,5 @@ The replication end-to-end tests have to reproduce the faults that a node meets 
 ## Decision
 
 - The end-to-end replication suite produces network faults through the in-process proxy, while the simulated transport produces the faults that need message-level control, such as losing every acknowledgement or dropping each message with a seeded probability of 0.3.
-- The coordinator failover suite keeps Toxiproxy, because it already starts etcd in Docker and runs each node in a child process of its own.
+- The coordinator failover suite keeps Toxiproxy, because it already starts etcd in Docker and runs each node in a separate child process.
 - We keep every hook that only a test calls in the test files under `src/__tests__/`.

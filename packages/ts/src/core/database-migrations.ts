@@ -34,7 +34,7 @@ async function refreshTriggersAfterSchemaChange(
  * into a table that it creates stay out of the change log.
  *
  * When the database stamps its changes, every migration transaction first stamps the changes that another process
- * wrote, then leaves its own changes unstamped and raises the stamp floor above them, because each device applies the
+ * wrote, then leaves the changes that the migration writes unstamped and raises the stamp floor above them, because each device applies the
  * registry's migrations itself.
  *
  * @param conn - The writer connection.

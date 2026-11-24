@@ -47,7 +47,7 @@ export interface ColumnReadLimits {
    * this limit.
    */
   maxBytes?: number
-  /** `true` to leave every integer as a `bigint`, for a caller that encodes the rows for the wire in its own pass. */
+  /** `true` to leave every integer as a `bigint`, for a caller that encodes the rows for the wire in a separate pass. */
   rawIntegers?: boolean
 }
 

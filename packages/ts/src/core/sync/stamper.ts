@@ -74,7 +74,7 @@ export class SyncStamper {
    * above the stamp floor with this node, one fresh transaction id, and one fresh timestamp.
    *
    * Those changes are the ones that another process wrote into the file since Sirannon last stamped, so they become
-   * one transaction of their own, ordered before the write path's own changes.
+   * a separate transaction, ordered before the changes that the write path makes.
    *
    * @returns The statement, with fresh parameters on every call.
    */
@@ -87,8 +87,8 @@ export class SyncStamper {
   }
 
   /**
-   * Returns the statements that a write path executes last in its transaction, which stamp its own changes under one
-   * fresh transaction id and, unless `persistClock` is `false`, store the clock and raise the stamp floor to the
+   * Returns the statements that a write path executes last in its transaction, which stamp the changes that the write
+   * path makes under one fresh transaction id and, unless `persistClock` is `false`, store the clock and raise the stamp floor to the
    * highest sequence in the change log.
    *
    * @param options - Set `persistClock` to `false` for every unit of a group but the last.

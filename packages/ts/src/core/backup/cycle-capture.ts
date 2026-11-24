@@ -62,7 +62,7 @@ function rewoundError(request: CaptureRequest, detail: string): SirannonError {
 
 /**
  * Copies the log frames that a database writes after the previous capture into
- * a staging file of their own. The checkpoint after the capture empties the
+ * a separate staging file. The checkpoint after the capture empties the
  * log, so Sirannon must copy the frames out before that checkpoint.
  *
  * A capture that starts at frame one includes the 32-byte log header with the

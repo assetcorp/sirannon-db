@@ -2,7 +2,7 @@
 
 `@delali/sirannon-db/server` serves a `Sirannon` registry over HTTP and WebSocket through uWebSockets.js.
 
-Install uWebSockets.js alongside the package before you start the server. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version that Sirannon's own development dependencies use:
+Install uWebSockets.js alongside the package before you start the server. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version that Sirannon's development dependencies use:
 
 ```bash
 pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
@@ -36,7 +36,7 @@ A server refuses SQL from the network by default. Register the statements that c
 
 ## Authentication
 
-The server calls the `authenticate` hook before every database route and every WebSocket upgrade. Return the caller's identity so that the server can fill each `fromIdentity` argument of a registered operation. Throw a `RequestDeniedError` to refuse the request with a status of your own. The server answers the health and capability endpoints without calling the hook.
+The server calls the `authenticate` hook before every database route and every WebSocket upgrade. Return the caller's identity so that the server can fill each `fromIdentity` argument of a registered operation. Throw a `RequestDeniedError` to refuse the request with a status that you choose. The server answers the health and capability endpoints without calling the hook.
 
 ```ts
 import { RequestDeniedError } from '@delali/sirannon-db'
@@ -194,7 +194,7 @@ curl -XPOST -H "$AUTH" -d '{"moment":1755500000000}' https://db.example.com/db/o
 curl -H "$AUTH" https://db.example.com/db/orders/backup/restore
 ```
 
-The server first closes the database, which captures its log one final time. It then discards the chain that the old file extends and rebuilds the file from that database's own backups. Finally, it opens the database again under the same identifier with the settings that it had. While the rebuild proceeds, the server answers every route for that identifier with `404 DATABASE_NOT_FOUND`, so the status route reports from the server's own record of the restore. After the reopen, the first turn of the cycle copies the whole database and starts a fresh chain, because the rebuilt file's log shares no history with the old chain. Because Sirannon discards the old chain before it replaces the file, a process that dies part-way through a restore can't go on to add captures to a chain that the restore replaced.
+The server first closes the database, which captures its log one final time. It then discards the chain that the old file extends and rebuilds the file from the backups of that database. Finally, it opens the database again under the same identifier with the settings that it had. While the rebuild proceeds, the server answers every route for that identifier with `404 DATABASE_NOT_FOUND`, so the status route reports from the record of the restore that the server keeps. After the reopen, the first turn of the cycle copies the whole database and starts a fresh chain, because the rebuilt file's log shares no history with the old chain. Because Sirannon discards the old chain before it replaces the file, a process that dies part-way through a restore can't go on to add captures to a chain that the restore replaced.
 
 When you request a second restore of the same database during a restore, the server answers `409 BACKUP_RESTORE_IN_PROGRESS`. When a rebuild fails, the server still opens the database again, and the status route returns the error code of that failure. When the close fails, the server leaves nothing open under that identifier, because a second runtime over a file that the old connections may still be using would put two writers on one database. When the reopen fails after a successful rebuild, the status route reports `done` with the report and a separate `reopenError`, because Sirannon has already replaced the data and a restart of the process is all that you need.
 

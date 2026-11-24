@@ -215,7 +215,7 @@ export interface ReplicationConfig {
   writeForwarding?: boolean
   /** Maps table names to the resolvers that replace the default for those tables. */
   conflictResolvers?: Record<string, ConflictResolver>
-  /** Sets the resolver for every table that has no resolver of its own. Defaults to last-writer-wins. */
+  /** Sets the resolver for every table that `conflictResolvers` leaves out. Defaults to last-writer-wins. */
   defaultConflictResolver?: ConflictResolver
   /** Sets the most changes that one outgoing batch holds. */
   batchSize?: number

@@ -9,8 +9,8 @@ _PURPOSE = (
 )
 
 _ONE_HOST = (
-    "Both engines operate at matched durability as native processes on one host, each pinned to its own logical "
-    "CPUs under a hard memory ceiling. One open-loop load generator, which records the full tail latency, drives "
+    "Both engines operate at matched durability as native processes on one host, each pinned to a separate set of "
+    "logical CPUs under a hard memory ceiling. One open-loop load generator, which records the full tail latency, drives "
     "each engine through the client that the engine provides."
 )
 

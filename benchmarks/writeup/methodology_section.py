@@ -146,7 +146,7 @@ def _settings_table(comparison: dict, docs: str) -> str:
 def _transport_sentence(network: bool) -> str:
     if network:
         return (
-            "The load generator runs on a machine of its own, and both engines answer it over the private network "
+            "The load generator runs on a separate machine, and both engines answer it over the private network "
             "between the two machines."
         )
     return "Both engines answer on the same host over loopback."
@@ -160,7 +160,7 @@ def _isolation_sentence(network: bool) -> str:
         )
     return (
         "The harness pins the engine "
-        "under test to its own logical CPUs under a hard memory ceiling, while the load generator uses separate "
+        "under test to dedicated logical CPUs under a hard memory ceiling, while the load generator uses separate "
         "logical CPUs with no memory cap."
     )
 
@@ -191,7 +191,7 @@ def methodology_block(comparison: dict) -> str:
         "against the live engine and records it with the results, so that you can see whether a client limited a "
         "rate.\n\n"
         "The two engines handle concurrent requests in different ways. PostgreSQL serves each connection with "
-        f"[its own server process]({docs}/tutorial-arch.html), which executes one request at a time. "
+        f"[a separate server process]({docs}/tutorial-arch.html), which executes one request at a time. "
         "PostgreSQL can therefore work on as many requests at once as the pool has connections. While "
         "one WAL flush is in progress, PostgreSQL gathers the commits of the other connections that are waiting to "
         "flush and writes them all with the next flush, a mechanism that its documentation calls "

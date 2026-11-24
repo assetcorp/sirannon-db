@@ -127,8 +127,8 @@ export class Transaction {
   }
 
   /**
-   * Refuses the call once this transaction has ended, so that a subclass can check the transaction before it
-   * executes any statement of its own.
+   * Refuses the call once this transaction has ended, so that a subclass can check the transaction before the
+   * subclass executes any statement.
    *
    * @throws A `SirannonError` with code `TRANSACTION_CLOSED` once the transaction has ended.
    * @internal

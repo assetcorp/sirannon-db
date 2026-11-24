@@ -22,7 +22,7 @@ export type GroupOutcome =
  * Executes several independent units in one transaction and returns one outcome for each unit, in order.
  *
  * A failed unit leaves the other units' writes intact, because Sirannon rolls
- * the group back and executes each unit inside a savepoint of its own. Each
+ * the group back and executes each unit inside a separate savepoint. Each
  * outcome holds the row counts of the attempt that took effect.
  *
  * Sirannon executes `opening` once at the start of every transaction that it

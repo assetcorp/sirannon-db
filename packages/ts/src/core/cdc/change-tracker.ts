@@ -152,7 +152,7 @@ export class ChangeTracker {
    * Call it after a DDL statement inside an open transaction, so that the next
    * write in that transaction records the new columns in `new_data`. You can
    * also call it outside a transaction, in which case SQLite commits each
-   * `CREATE TRIGGER` and `DROP TRIGGER` statement on its own. The method skips
+   * `CREATE TRIGGER` and `DROP TRIGGER` statement separately. The method skips
    * a watched table that no longer exists, and it leaves that table's entry for
    * `pruneDroppedTables` to remove after the commit. A
    * driver error or an invalid column name propagates to the caller, so that

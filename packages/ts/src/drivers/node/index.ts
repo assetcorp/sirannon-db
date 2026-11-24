@@ -16,7 +16,7 @@ import { allReadsKeepStaleColumns, readAllRows } from './stale-columns.js'
 import { prepareStatement } from './statement-text.js'
 
 /**
- * Settings for the driver built on Node's own SQLite module.
+ * Settings for the driver built on Node's built-in SQLite module.
  *
  * @public
  */

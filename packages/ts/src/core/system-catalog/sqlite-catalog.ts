@@ -267,8 +267,8 @@ export async function foreignKeyViolations(conn: SQLiteConnection): Promise<Fore
  * Returns every table and index that the application created, with the statement that SQLite stores for each.
  *
  * @param conn - The connection whose schema to read.
- * @param excludePrefix - The name prefix of the tables and indexes to leave out, such as Sirannon's own.
- * @returns One row per table or index, leaving out SQLite's own objects and every index that a constraint created.
+ * @param excludePrefix - The name prefix of the tables and indexes to leave out, such as the prefix of Sirannon's tables.
+ * @returns One row per table or index, leaving out SQLite's internal objects and every index that a constraint created.
  * @internal
  */
 export async function selectUserSchemaObjects(
@@ -286,8 +286,8 @@ export async function selectUserSchemaObjects(
  * Returns the names of every table that the application created.
  *
  * @param conn - The connection whose schema to read.
- * @param excludePrefix - The name prefix of the tables to leave out, such as Sirannon's own.
- * @returns The table names, leaving out SQLite's own tables.
+ * @param excludePrefix - The name prefix of the tables to leave out, such as the prefix of Sirannon's tables.
+ * @returns The table names, leaving out SQLite's internal tables.
  * @internal
  */
 export async function selectUserTableNames(conn: SQLiteConnection, excludePrefix: string): Promise<string[]> {

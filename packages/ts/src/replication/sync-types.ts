@@ -57,7 +57,7 @@ export interface SyncRequest {
   completedTables: string[]
   /** Is true when the joiner can verify the stream with chained batch digests. */
   supportsStreamVerification?: boolean
-  /** Names the newest transaction in the joiner's history, which a coordinator-mode source looks for in its own history before it streams a full copy. */
+  /** Identifies the newest transaction in the joiner's history, which a coordinator-mode source looks for in its history before it streams a full copy. */
   historyTail?: SyncHistoryPoint
   /** Identifies the joiner's replication group. */
   groupId?: string

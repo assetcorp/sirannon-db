@@ -54,7 +54,7 @@ export interface ReplicationAck {
  * @public
  */
 export interface ForwardedTransaction {
-  /** Lists the statements to execute, in order, each with its own parameters. */
+  /** Lists the statements to execute, in order, each with its parameters. */
   statements: Array<{ sql: string; params?: Record<string, unknown> | unknown[] }>
   /** Identifies this forwarded request. */
   requestId: string
@@ -62,7 +62,7 @@ export interface ForwardedTransaction {
   groupId?: string
   /** Holds the primary term that the replica reports as current. */
   primaryTerm?: bigint
-  /** The write concern that the caller states, which the primary waits for before it replies; without one, the primary applies its own default. */
+  /** The write concern that the caller states, which the primary waits for before it replies; without one, the primary applies its default. */
   writeConcern?: WriteConcern
 }
 

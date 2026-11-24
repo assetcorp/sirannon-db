@@ -32,7 +32,7 @@ Then add the SQLite driver for your runtime:
 
 Write a custom driver by passing `capabilities` and an `open` function to `defineDriver`.
 
-To serve a registry over HTTP and WebSocket through `@delali/sirannon-db/server`, add uWebSockets.js as well. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version in Sirannon's own development dependencies:
+To serve a registry over HTTP and WebSocket through `@delali/sirannon-db/server`, add uWebSockets.js as well. The npm registry has no package named `uWebSockets.js`, so install the tagged GitHub release v20.69.0, which is the version in Sirannon's development dependencies:
 
 ```bash
 pnpm add -E "uWebSockets.js@github:uNetworking/uWebSockets.js#v20.69.0"
@@ -149,7 +149,7 @@ Group statements into a transaction through `transaction()` or `executeTransacti
 const { columns, rows, truncated } = await db.queryWithColumns('SELECT * FROM orders', [], { maxRows: 500 })
 ```
 
-`bulkLoad` writes a large import in one transaction under relaxed durability, and then it restores the durability level that you configured. Read the [bulk load guide](https://sirannon.sondelali.com/docs/bulk-load) for the details, and the guides on [migrations](https://sirannon.sondelali.com/docs/migrations) and on [hooks, metrics, and the multi-tenant lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) for the rest of the core engine. Backups have a [guide of their own](https://sirannon.sondelali.com/docs/backups).
+`bulkLoad` writes a large import in one transaction under relaxed durability, and then it restores the durability level that you configured. Read the [bulk load guide](https://sirannon.sondelali.com/docs/bulk-load) for the details, and the guides on [migrations](https://sirannon.sondelali.com/docs/migrations) and on [hooks, metrics, and the multi-tenant lifecycle](https://sirannon.sondelali.com/docs/hooks-metrics-and-lifecycle) for the rest of the core engine. Backups have a [separate guide](https://sirannon.sondelali.com/docs/backups).
 
 ## Change data capture and live queries
 
@@ -166,7 +166,7 @@ const subscription = db
 
 With a filter, you receive each change in a row's membership of the set that the filter matches. When an order's `status` changes from `pending` to `shipped`, the handler receives an insert, because the row joins the set. When an order's `status` changes away from `shipped`, the handler receives a delete with the previous row in `oldRow`. Read `event.type` as the row joining or leaving the set, because the handler receives the same event for a real insert and for a row that joins the set.
 
-When a `REPLACE` deletes a stored row because the new row has the same primary key or the same value in a unique column, Sirannon calls the handler with a delete for that row before it calls the handler with the write. If your own `BEFORE` trigger on the table inserts or updates a row in the same statement and the `REPLACE` then deletes that row, Sirannon may report no delete for it.
+When a `REPLACE` deletes a stored row because the new row has the same primary key or the same value in a unique column, Sirannon calls the handler with a delete for that row before it calls the handler with the write. If a `BEFORE` trigger that you define on the table inserts or updates a row in the same statement and the `REPLACE` then deletes that row, Sirannon may report no delete for it.
 
 Migrations and rollbacks preserve capture on tables that another process or an earlier session watched. After each schema statement, Sirannon restores their capture triggers. For a table that the migration creates, Sirannon installs the triggers at the next statement that alters or drops a table, an index, a trigger, or a view, or at the end of that migration. A `CREATE` statement leaves every created table waiting, so a migration can create its tables and indexes before it copies rows into them. Sirannon excludes every write to that table during this interval from the change log, including copied rows, and captures writes after it installs the triggers.
 

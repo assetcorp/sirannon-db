@@ -15,7 +15,7 @@ export class ReplicationError extends SirannonError {
   }
 }
 
-/** Sirannon throws this error when a conflict resolver fails on a replicated change, and it names the table and row; `cause` holds the resolver's own error.
+/** Sirannon throws this error when a conflict resolver fails on a replicated change, and it identifies the table and row; `cause` holds the error that the resolver threw.
  * @public
  */
 export class ConflictError extends ReplicationError {

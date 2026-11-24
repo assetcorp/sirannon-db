@@ -38,7 +38,6 @@ const WORDS_THAT_END_A_FROM_CLAUSE = new Set([
   'where',
   'group',
   'having',
-  'window',
   'order',
   'limit',
   'union',
@@ -136,6 +135,7 @@ export class StringNamePositions {
   private opensTableList(depth: number): boolean {
     const last = this.last
     if (last === '(') return this.tableListDepths.has(depth)
+    if (last === 'from' && this.beforeLast === 'distinct' && (this.third === 'is' || this.third === 'not')) return false
     if (last === 'from' || last === 'join' || last === ',') return this.fromClauseDepths.has(depth)
     return false
   }

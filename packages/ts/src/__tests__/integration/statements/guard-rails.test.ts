@@ -93,6 +93,7 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
     await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT, item TEXT NOT NULL)')
     await db.execute('CREATE INDEX orders_by_item ON orders (item)')
     await db.execute('CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)')
+    await db.execute('CREATE TABLE window (id INTEGER)')
     await db.executeBatch('INSERT INTO orders (item) VALUES (?)', [['kettle'], ['teapot'], ['kettle']])
     await db.watch('orders')
     await db.execute('INSERT INTO orders (item) VALUES (?)', ['strainer'])
@@ -300,6 +301,11 @@ describe.each(WRITER_PLACEMENTS)('the statement guard with $label', ({ writerWor
 })
 
 const QUOTED_INTERNAL_TABLES = [
+  "SELECT * FROM window, '_sirannon_meta'",
+  "SELECT * FROM orders AS window, '_sirannon_meta'",
+  "CREATE TABLE copied AS SELECT * FROM ('_sirannon_meta')",
+  "INSERT INTO notes (body) SELECT value FROM ('_sirannon_meta')",
+  "UPDATE notes SET body = (SELECT value FROM ('_sirannon_meta') LIMIT 1)",
   "SELECT * FROM '_sirannon_meta'",
   "select key from main.'_SIRANNON_META'",
   "SELECT * FROM orders CROSS JOIN '_sirannon_changes'",
@@ -326,6 +332,11 @@ const QUOTED_INTERNAL_TABLES = [
 ]
 
 const QUOTED_INTERNAL_VALUES = [
+  "SELECT orders.id FROM orders JOIN notes ON notes.body IS DISTINCT FROM ('_sirannon_meta') ORDER BY orders.id",
+  "SELECT * FROM (SELECT '_sirannon_meta' AS name, '_sirannon_changes' AS other)",
+  "SELECT * FROM (VALUES ('_sirannon_meta'), ('_sirannon_changes'))",
+  "SELECT body FROM notes WHERE body = ('_sirannon_meta')",
+  "SELECT body FROM notes WHERE body IS DISTINCT FROM ('_sirannon_meta')",
   "SELECT body FROM notes WHERE body = '_sirannon_meta'",
   "SELECT '_sirannon_meta' AS name, '_sirannon_changes' AS other FROM notes WHERE body = 'plain'",
   "SELECT body FROM notes WHERE body IN ('_sirannon_meta', '_sirannon_changes') ORDER BY body",

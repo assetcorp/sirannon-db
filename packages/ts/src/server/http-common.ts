@@ -3,7 +3,7 @@ import { SirannonError, WriteOverloadError } from '../core/errors.js'
 import type { Sirannon } from '../core/sirannon.js'
 import type { ReadConcern, ServerExecutionTarget, ServerExecutionTargetResolver, WriteConcern } from '../core/types.js'
 import { clientErrorMessage, sharesErrorDetails } from './client-error.js'
-import { endResponse, markBodyArriving, settleResponse } from './connection-drain.js'
+import { endResponseWithBody, markAbortWatched, markBodyArriving, settleResponse } from './connection-drain.js'
 import type { ErrorResponse } from './protocol.js'
 import { validateReadConcern, validateWriteConcern } from './protocol.js'
 
@@ -35,6 +35,7 @@ export function initAbortHandler(res: HttpResponse): ResponseGuard {
     settleResponse(res)
     for (const fn of listeners) fn()
   })
+  markAbortWatched(res)
 
   return {
     get aborted() {
@@ -122,9 +123,13 @@ export function parseBody<T>(res: HttpResponse, raw: Buffer): T | null {
 
 export function sendJson(res: HttpResponse, data: unknown, status = '200 OK'): void {
   const payload = JSON.stringify(data)
-  endResponse(res, () => {
-    res.writeStatus(status).writeHeader('Content-Type', 'application/json').end(payload)
-  })
+  endResponseWithBody(
+    res,
+    () => {
+      res.writeStatus(status).writeHeader('Content-Type', 'application/json')
+    },
+    payload,
+  )
 }
 
 export function sendError(
@@ -137,13 +142,17 @@ export function sendError(
 ): void {
   const body: ErrorResponse = { error: details ? { code, message, details } : { code, message } }
   const payload = JSON.stringify(body)
-  endResponse(res, () => {
-    res.writeStatus(`${status}`)
-    if (headers) {
-      for (const [name, value] of Object.entries(headers)) res.writeHeader(name, value)
-    }
-    res.writeHeader('Content-Type', 'application/json').end(payload)
-  })
+  endResponseWithBody(
+    res,
+    () => {
+      res.writeStatus(`${status}`)
+      if (headers) {
+        for (const [name, value] of Object.entries(headers)) res.writeHeader(name, value)
+      }
+      res.writeHeader('Content-Type', 'application/json')
+    },
+    payload,
+  )
 }
 
 export function httpStatusForError(err: SirannonError): number {

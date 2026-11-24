@@ -10,8 +10,23 @@ type RouteHandler = (res: HttpResponse, req: HttpRequest) => void | Promise<void
 export type RouteRegistrar = Pick<TemplatedApp, 'get' | 'post' | 'options' | 'any'>
 
 const OWNING_DRAIN = Symbol('sirannon.owningDrain')
+const ABORT_WATCHED = Symbol('sirannon.abortWatched')
 
-type DrainedResponse = HttpResponse & { [OWNING_DRAIN]?: ConnectionDrain | undefined }
+type DrainedResponse = HttpResponse & {
+  [OWNING_DRAIN]?: ConnectionDrain | undefined
+  [ABORT_WATCHED]?: boolean
+}
+
+/**
+ * Records that a route has registered the `onAborted` handler of a response, which calls {@link settleResponse}, so
+ * that {@link endResponseWithBody} registers no second handler while it waits to send the rest of a body.
+ *
+ * @param res - The response whose `onAborted` handler the route registered.
+ * @internal
+ */
+export function markAbortWatched(res: HttpResponse): void {
+  ;(res as DrainedResponse)[ABORT_WATCHED] = true
+}
 
 /**
  * Records that a response has ended or that its client went away, so that a server waiting to close stops waiting for it.
@@ -31,8 +46,9 @@ export function settleResponse(res: HttpResponse): void {
  * Writes a whole response in one corked batch and then records that the response ended, so that a server waiting to
  * close stops waiting for it.
  *
- * Every route ends its response through this function, because a response that ends without that record holds a closing
- * server open until the close deadline passes.
+ * Every route ends its response through this function or through {@link endResponseWithBody}, because a response that
+ * ends without that record holds a closing server open until the close deadline passes. A response that carries a body
+ * goes through {@link endResponseWithBody}, so that closing the server waits until the whole body is sent.
  *
  * @param res - The response to write.
  * @param write - Writes the status, the headers, and the body, and ends the response, or upgrades it to a WebSocket.
@@ -41,6 +57,37 @@ export function settleResponse(res: HttpResponse): void {
 export function endResponse(res: HttpResponse, write: () => void): void {
   res.cork(write)
   settleResponse(res)
+}
+
+/**
+ * Writes the status and headers of a response with a body, sends as much of the body as the socket takes, and records
+ * that the response ended only once uWebSockets.js has sent its last byte or the client has gone away.
+ *
+ * A closing server waits for that record, so a large answer reaches its client whole before the server ends the
+ * connection, as long as it arrives before the close deadline passes.
+ *
+ * @param res - The response to write.
+ * @param writeHead - Writes the status and the headers, and leaves the response open.
+ * @param body - The body of the response.
+ * @internal
+ */
+export function endResponseWithBody(res: HttpResponse, writeHead: () => void, body: string): void {
+  const size = Buffer.byteLength(body)
+  let sent = false
+  res.cork(() => {
+    writeHead()
+    const start = res.getWriteOffset()
+    sent = res.tryEnd(body, size)[1]
+    if (sent) return
+    const bytes = Buffer.from(body)
+    if ((res as DrainedResponse)[ABORT_WATCHED] !== true) res.onAborted(() => settleResponse(res))
+    res.onWritable(offset => {
+      const [accepted, finished] = res.tryEnd(bytes.subarray(offset - start), size)
+      if (finished) settleResponse(res)
+      return accepted
+    })
+  })
+  if (sent) settleResponse(res)
 }
 
 /**

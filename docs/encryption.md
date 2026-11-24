@@ -110,7 +110,7 @@ The change fails with one of these codes and leaves the database under its curre
 
 Once the new file exists, Sirannon writes a small marker file beside the database, which records the new file's first 16 bytes and whether the replacement has begun. When the process stops at any point during the change, the next open reads that marker and either finishes the replacement or deletes the new file, and every committed row is still there afterwards.
 
-Until the replacement, the old key opens the database, and after it, the new key does. Keep both keys available until `changeEncryption` resolves, because a process that stops close to the replacement can leave either one in force. When the key that you give fails after such a stop, the open fails with `ENCRYPTION_KEY_REJECTED`, and the message says whether the file needs the key from before the change or the key from after it.
+Until the replacement, the old key opens the database, and after it, the new key does. Keep both keys available until `changeEncryption` resolves, because a process that stops close to the replacement can leave either one in force. When the key that you give fails after such a stop, the open fails with `ENCRYPTION_KEY_REJECTED`, and the message says whether the file needs the key from before the change or the key from after it. A marker that Sirannon 0.4.5 or an earlier release left behind can make the message name both keys, because the files that those releases leave after a stop can't always show which key is in force.
 
 ## Backups and restores
 

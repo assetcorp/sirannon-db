@@ -12,7 +12,7 @@ import { bindableParams } from '../../core/driver/values.js'
 import { SirannonError } from '../../core/errors.js'
 
 const REPEATED_NAMES_MESSAGE =
-  'bun:sqlite returns rows one at a time only as objects keyed by column name, so it cannot read a result whose column names repeat under maxRows or maxBytes. Give each column its own name with AS, or read without the limits'
+  'bun:sqlite returns rows one at a time only as objects keyed by column name, so it cannot read a result whose column names repeat under maxRows or maxBytes. Give each column a distinct name with AS, or read without the limits'
 
 function columnDetailsOf(stmt: Statement): ColumnDetail[] {
   const declared = stmt.declaredTypes

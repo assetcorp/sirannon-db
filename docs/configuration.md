@@ -24,7 +24,7 @@ This page lists every option that the registry, the databases that it opens, the
 | `idleTimeout` | `number` | `0` | Milliseconds before an idle database closes; `0` disables the timer |
 | `maxOpen` | `number` | `0` | Maximum databases open at once, evicting least-recently-used; `0` means unlimited |
 
-`createTenantResolver` builds a resolver from a `basePath`, an optional file `extension`, and `defaultOptions` that it applies to every tenant that it opens. The resolver accepts a tenant ID made of lowercase letters, digits, underscores, and hyphens that starts with a letter or a digit, as long as the file name, extension included, fits in 255 characters. It returns `undefined` for any other ID. The rule excludes capital letters because on a file system that ignores case, such as the default one on macOS or Windows, `Acme.db` and `acme.db` name the same file. When another system identifies your tenants with IDs that hold capital letters, store a lowercase ID of your own for each tenant, because `Acme` and `acme` both lowercase to `acme` and would then share one database.
+`createTenantResolver` builds a resolver from a `basePath`, an optional file `extension`, and `defaultOptions` that it applies to every tenant that it opens. The resolver accepts a tenant ID made of lowercase letters, digits, underscores, and hyphens that starts with a letter or a digit, as long as the file name, extension included, fits in 255 characters. It returns `undefined` for any other ID. The rule excludes capital letters because on a file system that ignores case, such as the default one on macOS or Windows, `Acme.db` and `acme.db` name the same file. When another system identifies your tenants with IDs that hold capital letters, store a separate lowercase ID for each tenant, because `Acme` and `acme` both lowercase to `acme` and would then share one database.
 
 ## `DatabaseOptions`
 
@@ -139,12 +139,12 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `maxBodyBytes` | `number` | `1_048_576` | Maximum HTTP body and WebSocket message size; a positive integer no larger than `4_294_967_295` |
 | `maxWebSocketBackpressureBytes` | `number` | larger of `16_777_216` and `maxBodyBytes` | Bytes buffered per connection before the server closes it, so that the client reconnects and resumes with no frame lost |
 | `cdcRetentionMs` | `number` | `3_600_000` | How long the server keeps change events, which bounds change-log growth and how far back `sinceSeq` can resume |
-| `deviceCursorRetentionMs` | `number` | `2_592_000_000` | How long, 30 days by default, a device's cursor may hold changes back before the server deletes it; that device then resyncs from a snapshot, and a database's own `deviceCursorRetention` overrides this |
-| `maxChangesHeldForDevice` | `number` | `0` | Most changes that one device's cursor may hold back before the server drops it; `0` sets no limit, and a database's own option overrides this |
+| `deviceCursorRetentionMs` | `number` | `2_592_000_000` | How long, 30 days by default, a device's cursor may hold changes back before the server deletes it; that device then resyncs from a snapshot, and the `deviceCursorRetention` option of a database overrides this |
+| `maxChangesHeldForDevice` | `number` | `0` | Most changes that one device's cursor may hold back before the server drops it; `0` sets no limit, and the database option of the same name overrides this |
 | `maxUnacknowledgedChanges` | `number` | `1_000` | How far past its acknowledged sequence a device may get before delivery pauses; the server still delivers a larger transaction whole |
 | `authenticate` | `AuthenticateHook<Identity>` | - | Runs before every database route and WebSocket upgrade; returns the caller identity, throws `RequestDeniedError` to refuse |
 | `operations` | `OperationRegistry<Identity>` | - | Reads and writes that this server serves by name, keyed by database ID |
-| `sharedOperations` | `DatabaseOperations<Identity>` | - | Reads and writes that this server serves by name on every database, including a database that the registry opens after the server starts; for a name in both sets, the server uses the database's own entry in `operations` |
+| `sharedOperations` | `DatabaseOperations<Identity>` | - | Reads and writes that this server serves by name on every database, including a database that the registry opens after the server starts; for a name in both sets, the server uses the entry for that database in `operations` |
 | `acceptSql` | `boolean` | `false` | Whether the server accepts SQL statements over the network |
 | `acceptBackupRestore` | `boolean` | `false` | Whether the server rebuilds a database from its backups over the network |
 | `acceptEncryptionChange` | `boolean` | `false` | Whether the server encrypts a database, changes its key, or removes encryption over the network; with it on, the server refuses to start unless you also set `authenticate` and `encryptionKeys` |
@@ -283,7 +283,7 @@ Both options apply only to a local `db.live`. A remote subscription has no optio
 | `credentials` | etcd credentials | - | Root certificate, private key, and certificate chain for mutual TLS |
 | `auth` | etcd auth | - | Username and password authentication |
 | `grpcOptions` | `Record<string, unknown>` | - | Options passed through to the etcd gRPC channel |
-| `dialTimeoutMs` | `number` | the etcd client's own default | Connection timeout in ms |
+| `dialTimeoutMs` | `number` | the etcd client's default | Connection timeout in ms |
 | `defaultCallTimeoutMs` | `number` | - | Deadline applied to each coordinator call in ms |
 | `allowInsecure` | `boolean` | `false` | Allows plain-`http` endpoints; use it in tests only |
 | `onWatcherError` | `(error: Error) => void` | - | Called when a coordinator watcher fails, and on each failed try to reopen a watch after etcd cancels it or after the client reaches a restored or new etcd cluster |

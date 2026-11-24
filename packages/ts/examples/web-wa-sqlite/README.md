@@ -34,7 +34,7 @@ pnpm --dir packages/ts/examples/web-wa-sqlite run app:dev
 
 Open `http://localhost:5173`.
 
-Or start the app on its own, with no server and no device sync:
+Or start the app alone, with no server and no device sync:
 
 ```bash
 pnpm --dir packages/ts/examples/web-wa-sqlite run app:dev:browser
@@ -87,7 +87,7 @@ Execute `SELECT * FROM _sirannon_meta` to see the result. Sirannon reserves ever
 
 [`src/schema.ts`](src/schema.ts) contains the migration that both sides apply, along with the fixed seed rows. The server registers the migration on the `Sirannon` registry, so that the server can send the migration SQL to a device with an older schema. The app applies the same array in the browser, so a device with no server connection yet still has its tables.
 
-The code in [`src/data-server.ts`](src/data-server.ts) opens the database, watches `work_orders`, seeds the four orders on the first start, and starts the server. `acceptSql` stays at its default, so this server executes no SQL from the network. The code sets `acceptDeviceSync: true` to open the device sync routes, together with an `authenticate` hook, because the server throws `INVALID_DEVICE_SYNC` at construction when `acceptDeviceSync` has no `authenticate` hook. An `onBeforePush` hook from [`src/device-identity.ts`](src/device-identity.ts) stores the fleet of the first push from each device and throws `HookDeniedError` for a later push from any other fleet. List the capabilities of the server with `curl http://localhost:9876/capabilities`. Keep the file name as it is, because TanStack Start reserves `src/server.ts` for its own server entry.
+The code in [`src/data-server.ts`](src/data-server.ts) opens the database, watches `work_orders`, seeds the four orders on the first start, and starts the server. `acceptSql` stays at its default, so this server executes no SQL from the network. The code sets `acceptDeviceSync: true` to open the device sync routes, together with an `authenticate` hook, because the server throws `INVALID_DEVICE_SYNC` at construction when `acceptDeviceSync` has no `authenticate` hook. An `onBeforePush` hook from [`src/device-identity.ts`](src/device-identity.ts) stores the fleet of the first push from each device and throws `HookDeniedError` for a later push from any other fleet. List the capabilities of the server with `curl http://localhost:9876/capabilities`. Keep the file name as it is, because TanStack Start reserves `src/server.ts` for the TanStack Start server entry.
 
 The code in [`src/lib/field-device.ts`](src/lib/field-device.ts) opens the local database, applies the migration, watches the table so that Sirannon records local writes in the outbox, seeds a never-synced device, and builds the controller. The hook in [`src/features/field-service/use-field-device.ts`](src/features/field-service/use-field-device.ts) manages the lifecycle: it requests the tab lock, opens the device, starts sync, and closes everything when you switch devices.
 
@@ -134,9 +134,9 @@ The server limits CORS to the app origin and executes no SQL from the network, s
 
 A device sends its credential in two forms, because the browser WebSocket API sets no custom header on the upgrade request. The app passes the credential in `headers` for the HTTP push and the snapshot download, and in `webSocketProtocols` for the pull subscription. `createDeviceAuthenticator` in `src/device-identity.ts` checks the `Origin` header when a request has one, reads the credential from whichever form the request includes, and throws `RequestDeniedError` when either check fails.
 
-Replace the token before you deploy this, because this one is a shared constant that the browser bundle includes in plain text. In a deployment, the application should mint a short-lived ticket for each device from a route of its own, serve everything over TLS, and redact both the authorization header and the offered subprotocols from its access logs.
+Replace the token before you deploy this, because this one is a shared constant that the browser bundle includes in plain text. In a deployment, the application should mint a short-lived ticket for each device from a separate route, serve everything over TLS, and redact both the authorization header and the offered subprotocols from its access logs.
 
-The fleet check stores the fleet of each device in memory, so a restart of the server clears that record. In a deployment, store that record in your own database.
+The fleet check stores the fleet of each device in memory, so a restart of the server clears that record. In a deployment, store that record in your application's database.
 
 Each text column of the work order table has a `CHECK` constraint, so the server applies the same limits as the local database. A hand-written push can therefore store no more than the form can.
 

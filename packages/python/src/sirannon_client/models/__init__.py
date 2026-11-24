@@ -290,8 +290,8 @@ class BackupRestoreSummary(ApiModel):
     frames_applied: int | float = Field(alias="framesApplied")
     """The number of log frames in those pieces."""
     batch_count: int | float = Field(alias="batchCount")
-    """The number of batches that Sirannon applies the change pieces in, each with a checkpoint of
-    its own.
+    """The number of batches that Sirannon applies the change pieces in, each with a separate
+    checkpoint.
     """
 
 
@@ -1571,8 +1571,8 @@ class WSSubscribeMessage(ApiModel):
     """
     epoch: str | None = None
     """The `epoch` that the server reported with this cursor. A `sinceSeq` is valid only within the
-    sequence space that produced it, so when this epoch differs from the server's own, the
-    server answers with `resync: true` and skips the replay.
+    sequence space that produced it, so when this epoch differs from the server's current epoch,
+    the server answers with `resync: true` and skips the replay.
     """
     device_id: str | None = Field(default=None, alias="deviceId")
     """The device's identifier, which makes this a device-sync subscription."""

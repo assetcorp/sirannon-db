@@ -135,7 +135,7 @@ function destinationError(message: string, err?: unknown): SirannonError {
 
 /**
  * Returns the name that Sirannon stores the records of one chain under. Each
- * chain has a name of its own, so deleting an old chain leaves every other
+ * chain has a separate name, so deleting an old chain leaves every other
  * chain in place.
  *
  * @param chainName - The name that Sirannon stores the list of chains under.
@@ -260,7 +260,7 @@ export async function appendChainHead(
   }
 
   throw destinationError(
-    `Another chain took every one of the ${HEAD_APPEND_ATTEMPTS} places Sirannon tried for chain '${head.chainId}' in '${chainName}'. Point one replication group at this chain name, and give any other group a chainName of its own.`,
+    `Another chain took every one of the ${HEAD_APPEND_ATTEMPTS} places Sirannon tried for chain '${head.chainId}' in '${chainName}'. Point one replication group at this chain name, and give every other group a different chainName.`,
   )
 }
 
@@ -319,7 +319,7 @@ export async function readChainHeads(destination: BackupDestination, chainName: 
  *
  * @param destination - The destination that holds the backups and their records.
  * @param chainName - The name that Sirannon stores the list of chains under. Defaults to `sirannon-backup-chain`.
- * @returns The chains, newest first, each with its own records oldest first.
+ * @returns The chains, newest first, each listing its records oldest first.
  *
  * @public
  */

@@ -8,7 +8,7 @@ import { positionReport } from './position-report.js'
  * Sends the current primary this replica's applied position while the replica stays outside the in-sync set, so that
  * the primary, which admits replicas from their acknowledgements from feature level 2, can admit a caught-up replica
  * that receives no new writes, and so that a restarted primary can prove its copy against the replica's. A repairing
- * or faulted replica sends nothing, because it rejoins through its own path.
+ * or faulted replica sends nothing, because it rejoins through a separate path.
  *
  * @param engine - The replica's engine.
  * @returns A promise that settles once the report is sent, or at once when the replica has nothing to report.

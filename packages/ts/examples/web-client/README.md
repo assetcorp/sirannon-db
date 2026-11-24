@@ -73,7 +73,7 @@ The data server creates two tables and seeds the first one on startup:
 - `products` (id, name, price, stock) contains five sample records at startup.
 - The registered writes add a row to `activity` (id, product_name, action, quantity, operator, created_at) for each allocation, each receipt of stock, and each new product.
 
-When the client subscribes to a live query, the server calls `watch` on the table that the query selects from, so the data server code has no `watch` call of its own.
+When the client subscribes to a live query, the server calls `watch` on the table that the query selects from, so the data server code needs no `watch` call.
 
 ## Environment
 

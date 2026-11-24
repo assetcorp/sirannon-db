@@ -2,7 +2,7 @@ import type { SQLiteConnection } from './driver/types.js'
 import { SirannonError, TransactionError } from './errors.js'
 
 /**
- * Returns the error that Sirannon raises when SQLite refuses to commit a transaction, with SQLite's own error as the cause.
+ * Returns the error that Sirannon raises when SQLite refuses to commit a transaction, with the error that SQLite raised as the cause.
  *
  * @param err - The error that the failed `COMMIT` raised.
  * @returns A `TransactionError`, or `err` itself when it is already a `SirannonError`.
@@ -60,8 +60,8 @@ async function unwindSavepoint(conn: SQLiteConnection): Promise<void> {
 
 /**
  * Executes `body` inside a savepoint on `conn` and returns its result, so that
- * its writes join the transaction that the caller already holds on the writer
- * and roll back on their own when `body` throws.
+ * its writes join the transaction that the caller already holds on the writer,
+ * and only those writes roll back when `body` throws.
  *
  * Where no transaction is open, the savepoint opens one and its release
  * commits it, and a release that SQLite refuses raises `TRANSACTION_ERROR`.

@@ -46,7 +46,7 @@ export interface DeviceStreamDeps {
  * reports backpressure on the socket, it switches to `catchup` mode. In that mode it buffers
  * no events and records the position where it stopped, then reads the missing
  * range from the change log once the device acknowledges more changes or the
- * socket drains. The stream needs no buffer of its own, because the server
+ * socket drains. The stream keeps no separate buffer, because the server
  * keeps every change that a live device has not acknowledged in the change log.
  */
 export class DeviceChangeStream {
@@ -151,7 +151,7 @@ export class DeviceChangeStream {
    * When the buffered count is above zero, unchanged since the previous poll
    * batch, and below the congestion threshold, this method sends a ping so that
    * uWebSockets flushes the rest. It skips a congested socket, because that
-   * socket drains under its own flow control and one more frame could push it
+   * socket drains under its flow control and one more frame could push it
    * past the backpressure limit.
    */
   private nudgeStalledSocket(): void {
@@ -224,7 +224,7 @@ export class DeviceChangeStream {
    * starts after the later of two positions. `highestQueuedSeq` is the last
    * event that the stream queued on the socket, and `processedSeq` can be further
    * ahead when the transform suppresses every event after that one, so the
-   * stream skips a long sequence of the device's own echoes on every pause.
+   * stream skips a long sequence of echoes of the device's writes on every pause.
    */
   private enterCatchup(): void {
     const flushed = this.deps.packer?.flush() ?? 'queued'

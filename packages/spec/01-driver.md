@@ -27,7 +27,7 @@ SQLiteDriver {
 | `startWriterHost` | Opens the writer connection on a worker thread so slow disk work does not block the caller. Present only when the runtime has threads. See [Writer Worker](02-core.md#writer-worker). |
 | `createWriterContext` | Produces a [WriterContext](#writercontext) that distinguishes the caller holding the writer from one waiting on it. |
 | `createBackupEngine` | Produces a backup engine: it copies a database, schedules that copy, and builds the checkpoint cycle. See [Backups](02-core.md#backups). |
-| `resolveExtensionPath` | Resolves an extension path to an absolute path, so the dynamic linker cannot search its own paths; required when `capabilities.extensions` is `true`. |
+| `resolveExtensionPath` | Resolves an extension path to an absolute path, so the dynamic linker cannot search the system library paths; required when `capabilities.extensions` is `true`. |
 
 ### DriverCapabilities
 
@@ -58,7 +58,7 @@ OpenOptions {
   readonly?:           boolean          (default: false)
   walMode?:            boolean          (default: true)
   synchronous?:        SynchronousLevel (default: 'normal')
-  walAutoCheckpoint?:  number           (default: unset, leaving SQLite's own threshold in force)
+  walAutoCheckpoint?:  number           (default: unset, leaving SQLite's default threshold in force)
   encryption?:         { key: Bytes }   (default: unset, a plaintext database)
 }
 
@@ -70,7 +70,7 @@ SynchronousLevel = 'off' | 'normal' | 'full' | 'extra'
 | `readonly` | Opens the database read-only. A write on a read-only connection must fail. |
 | `walMode` | Enables WAL journal mode. |
 | `synchronous` | Selects the `PRAGMA synchronous` durability level. |
-| `walAutoCheckpoint` | Sets the frame count at which SQLite checkpoints the log on its own; `0` disables that. A driver applies it on every connection it opens, including one a restarted writer worker opens. |
+| `walAutoCheckpoint` | Sets the frame count at which SQLite checkpoints the log automatically; `0` disables that. A driver applies it on every connection it opens, including one a restarted writer worker opens. |
 | `encryption` | Carries the 32-byte key that opens an encrypted database. Core supplies it on every open, and the driver must keep no reference to the key once `open` returns. |
 
 ### open(path, options?)
@@ -111,8 +111,8 @@ SQLiteConnection {
 - **prepare** compiles a statement that can run many times. Callers should cache prepared statements to avoid reparsing.
 - **transaction** runs `fn` inside a transaction, commits on normal return, and rolls back if `fn` throws. The connection passed to `fn` is the one that holds the transaction; a caller must not use the outer connection during it.
 - **close** releases all resources. Every other method must throw afterwards. Closing an already-closed connection is a no-op.
-- **loadExtension** loads the compiled extension at the absolute path `extensionPath` into this connection through the engine's own loading call, never through the SQL `load_extension` function. A connection whose runtime cannot load an extension must fail with `EXTENSION_ERROR`, and the message must state which runtime refuses.
-- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. A driver that steps the copy on another thread must apply `stallTimeoutMs` as the deadline for the next step from that thread, in place of any deadline of its own. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`. When the connection is encrypted, `copyDatabase` must write the destination under the connection's key.
+- **loadExtension** loads the compiled extension at the absolute path `extensionPath` into this connection through the loading call that the engine provides, never through the SQL `load_extension` function. A connection whose runtime cannot load an extension must fail with `EXTENSION_ERROR`, and the message must state which runtime refuses.
+- **copyDatabase** copies this connection's database to `destPath` through SQLite's stepped backup interface, moving `pagesPerStep` pages per step and calling `onStep` after each one. The implementation must yield to the runtime's event loop between steps so that other work on this connection runs in the gaps. A driver that steps the copy on another thread must apply `stallTimeoutMs` as the deadline for the next step from that thread, in place of any separate deadline that the thread sets. SQLite copies no pages and reports success when a transaction is already open on the connection, so an implementation must reject that call with `BACKUP_ERROR` before starting. A connection whose runtime carries no stepped backup interface must fail with `BACKUP_UNSUPPORTED`. When the connection is encrypted, `copyDatabase` must write the destination under the connection's key.
 
 ```text
 DatabaseCopyRequest {
@@ -134,7 +134,7 @@ The optional methods let a driver accelerate bulk work:
 |--------|----------|
 | `runBatch` | Runs `sql` once per parameter set, returning one `RunResult` each. |
 | `runBatchSummary` | Runs `sql` once per parameter set, returning a `BatchSummary` rather than per-row results, to bound memory. |
-| `runGroup` | Runs several independent units in one transaction, returning one outcome per unit in order. A unit that fails must not disturb the others. A unit statement marked `trusted` bypasses the statement guard of [02-core.md](02-core.md#reserved-identifiers), including its transaction and temporary object rules, so that Sirannon's own savepoints and change-capture triggers run. |
+| `runGroup` | Runs several independent units in one transaction, returning one outcome per unit in order. A unit that fails must not disturb the others. A unit statement marked `trusted` bypasses the statement guard of [02-core.md](02-core.md#reserved-identifiers), including its transaction and temporary object rules, so that the savepoints and change-capture triggers that Sirannon creates run. |
 
 ```text
 RunResult      { changes: number, lastInsertRowId: number or bigint, rowsRead?: number, rowsWritten?: number }

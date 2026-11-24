@@ -206,7 +206,7 @@ export interface ReplicationGroupState {
   currentPrimary: CoordinatorPrimary | null
   /** Holds the current primary's term, which rises by one with each promotion. */
   primaryTerm: bigint
-  /** Holds the position in the current primary's change log up to which a majority of voting nodes stores the data durably. Each promotion sets it to 0, because the new primary numbers its change log on its own, and the new primary then records its own position. */
+  /** Holds the position in the current primary's change log up to which a majority of voting nodes stores the data durably. Each promotion sets it to 0, because the new primary numbers its change log independently, and the new primary then records its position. */
   durabilityPointSeq: bigint
   /** Lists the nodes that are in sync with the primary. */
   inSyncNodeIds: string[]

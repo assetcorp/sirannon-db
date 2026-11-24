@@ -14,7 +14,7 @@ const subscription = db.on('orders').subscribe(event => handle(event), { onError
 
 ## Keeping a result current
 
-Use `db.live(sql, params)` when the app needs the current rows, and a subscription when it needs each event. A live query watches its own tables:
+Use `db.live(sql, params)` when the app needs the current rows, and a subscription when it needs each event. A live query watches the tables that its statement reads:
 
 ```ts
 const live = await db.live<Order>('SELECT id, total FROM orders WHERE status = ?', ['pending'])

@@ -6,7 +6,7 @@ inputs:
     description: vfs for the streaming extension, sqlite for Sirannon's SQLite, or expo-sqlcipher for the SQLCipher that the Expo tests load
     required: true
   target:
-    description: The build target, such as linux-x64-musl, or empty for the runner's own platform
+    description: The build target, such as linux-x64-musl, or empty for the platform of the runner
     required: false
     default: ''
   from-source:

@@ -263,7 +263,7 @@ type BackupRestoreSummary struct {
 	ChangesApplied float64 `json:"changesApplied"`
 	// The number of log frames in those pieces.
 	FramesApplied float64 `json:"framesApplied"`
-	// The number of batches that Sirannon applies the change pieces in, each with a checkpoint of its own.
+	// The number of batches that Sirannon applies the change pieces in, each with a separate checkpoint.
 	BatchCount float64 `json:"batchCount"`
 }
 
@@ -1310,8 +1310,8 @@ type WSSubscribeMessage struct {
 	// `Number.MAX_SAFE_INTEGER` stays exact.
 	SinceSeq *string `json:"sinceSeq,omitempty"`
 	// The `epoch` that the server reported with this cursor. A `sinceSeq` is valid only within the
-	// sequence space that produced it, so when this epoch differs from the server's own, the server
-	// answers with `resync: true` and skips the replay.
+	// sequence space that produced it, so when this epoch differs from the server's current epoch, the
+	// server answers with `resync: true` and skips the replay.
 	Epoch *string `json:"epoch,omitempty"`
 	// The device's identifier, which makes this a device-sync subscription.
 	DeviceID *string `json:"deviceId,omitempty"`

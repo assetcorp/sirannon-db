@@ -35,4 +35,4 @@ When the glossary lacks a concept that you need, one of two things is true. Eith
 
 When you propose a change against an existing decision record, say so explicitly, as in this example:
 
-> _I'm proposing a change against ADR-0004, under which Sirannon's own controller performs automatic failover, and I'd reopen that decision because [your reason]._
+> _I'm proposing a change against ADR-0004, under which a Sirannon controller performs automatic failover, and I'd reopen that decision because [your reason]._

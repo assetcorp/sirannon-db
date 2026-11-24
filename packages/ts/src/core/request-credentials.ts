@@ -90,7 +90,7 @@ export function readBearerToken(ctx: RequestContext): string | undefined {
  * Returns the credential that a WebSocket upgrade offered under a prefix.
  *
  * The upgrade request lists every offered subprotocol, including the
- * `sirannon.v1` identifier that the client sends ahead of its own entries, so
+ * `sirannon.v1` identifier that the client sends ahead of its other entries, so
  * this function takes the first entry that starts with the prefix and decodes
  * what {@link toSubprotocolCredential} encoded there.
  *

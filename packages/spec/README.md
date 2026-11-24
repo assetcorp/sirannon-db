@@ -67,14 +67,14 @@ Test vector files are in the [test-vectors/](test-vectors/) directory.
 
 ## Pseudocode Convention
 
-Type definitions use a language-neutral notation; it is illustrative, not prescriptive, and each implementation uses its own type system.
+Type definitions use a language-neutral notation; it is illustrative, not prescriptive, and each implementation uses the type system of its language.
 
 | Notation | Meaning |
 |----------|---------|
 | `Map<K, V>` | A mapping from keys of type K to values of type V |
 | `List<T>` | An ordered collection of elements of type T |
 | `any` | A value of any type |
-| `T or null` | A value that is either T or absent (each language maps 'absent' to its own null, undefined, None, or Option) |
+| `T or null` | A value that is either T or absent (each language maps 'absent' to the null, undefined, None, or Option of that language) |
 | `<T>` | A generic type parameter |
 | `async -> T` | An asynchronous operation returning T |
 | `number` | A numeric value; a 64-bit integer where the text says so |

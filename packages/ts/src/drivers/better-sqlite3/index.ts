@@ -72,7 +72,7 @@ export interface BetterSqlite3Options {
    * that a database opened with the `encryption` option keeps every page as
    * AEGIS-256 ciphertext and
    * `changeEncryption` can encrypt, decrypt, or rekey a database. With it unset,
-   * the driver keeps better-sqlite3's own SQLite and fails an open with a key
+   * the driver keeps the SQLite build that better-sqlite3 bundles and fails an open with a key
    * with `ENCRYPTION_UNSUPPORTED`.
    */
   encryption?: boolean

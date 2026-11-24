@@ -99,7 +99,7 @@ export interface BackupRestoreReport {
   changesApplied: number
   /** The number of log frames in those pieces. */
   framesApplied: number
-  /** The number of batches that Sirannon applies the change pieces in, each with a checkpoint of its own. */
+  /** The number of batches that Sirannon applies the change pieces in, each with a separate checkpoint. */
   batchCount: number
   /** The moment, in epoch milliseconds, that the restore started. */
   startedAt: number

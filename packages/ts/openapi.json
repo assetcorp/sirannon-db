@@ -1546,7 +1546,7 @@
           },
           "batchCount": {
             "type": "number",
-            "description": "The number of batches that Sirannon applies the change pieces in, each with a checkpoint of its own."
+            "description": "The number of batches that Sirannon applies the change pieces in, each with a separate checkpoint."
           }
         },
         "required": [

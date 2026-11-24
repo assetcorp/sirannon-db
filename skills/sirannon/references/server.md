@@ -37,11 +37,11 @@ const server = createServer<{ tenant: string }>(sirannon, {
 await server.listen()
 ```
 
-When each tenant has its own database, put the tenants' `reads` and `writes` in `sharedOperations`, because the server serves that set on every database, including one that the registry opens after the server starts. `operations` maps one database identifier to operations for that database alone, and the server looks a name up there before it looks in `sharedOperations`. A 0.3.3 server has no `sharedOperations`, so on that release, build `operations` with one entry per tenant identifier and restart the server whenever a tenant joins. Take the shape of each operation from `ReadOperation` and `WriteOperation` in the installed types, and read `registered-operations.md` in the versioned documentation.
+When each tenant has a separate database, put the tenants' `reads` and `writes` in `sharedOperations`, because the server serves that set on every database, including one that the registry opens after the server starts. `operations` maps one database identifier to operations for that database alone, and the server looks a name up there before it looks in `sharedOperations`. A 0.3.3 server has no `sharedOperations`, so on that release, build `operations` with one entry per tenant identifier and restart the server whenever a tenant joins. Take the shape of each operation from `ReadOperation` and `WriteOperation` in the installed types, and read `registered-operations.md` in the versioned documentation.
 
 ## 3. Keep it safe
 
-- Refuse every caller in `authenticate` that may not use `ctx.databaseId`. Each tenant has a database of its own, so this check is the tenant boundary, and it covers every HTTP route and every WebSocket upgrade.
+- Refuse every caller in `authenticate` that may not use `ctx.databaseId`. Each tenant has a separate database, so this check is the tenant boundary, and it covers every HTTP route and every WebSocket upgrade.
 - Fill every owner or tenant argument through `fromIdentity`, so that a caller who sends it receives `ARGUMENT_NOT_ALLOWED`.
 - Leave `acceptSql` off, which is the default, unless every caller that `authenticate` admits may execute any statement. Give callers live results through `db.live` on a registered read.
 - To stream a table's changes with `acceptSql` off, register an `onBeforeSubscribe` hook that refuses each table the caller may not read in full. A 0.3.3 server streams every table without the hook, so register it there too.

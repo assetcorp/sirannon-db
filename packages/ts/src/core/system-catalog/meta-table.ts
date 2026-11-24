@@ -2,7 +2,7 @@ import type { SQLiteConnection } from '../driver/types.js'
 import { META_TABLE } from '../internal-tables.js'
 
 /**
- * Creates the key and value table that holds Sirannon's own settings for a database, where the table is missing.
+ * Creates the key and value table that holds Sirannon's settings for a database, where the table is missing.
  *
  * @param conn - The writer connection.
  * @returns A promise that settles once the table exists.

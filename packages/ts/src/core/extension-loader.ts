@@ -25,11 +25,12 @@ function isAbsolutePath(candidate: string): boolean {
 /**
  * Loads a compiled SQLite extension into every connection that the caller
  * passes, so that reads and writes can both call the extension's functions.
- * Each driver loads the extension through its runtime's own call, because both
- * Node drivers reject the SQL `load_extension` function as unauthorised.
+ * Each driver loads the extension through the loading call that its runtime
+ * provides, because both Node drivers reject the SQL `load_extension` function
+ * as unauthorised.
  *
- * A driver whose runtime has no loading call throws its own error from the
- * connection, and that error names the runtime.
+ * A driver whose runtime has no loading call throws, from the connection, an
+ * error that identifies the runtime.
  *
  * SQLite has no call that unloads an extension, so when one connection in the
  * set fails, the connections loaded before it keep the extension and this
@@ -59,7 +60,7 @@ export async function loadExtension(
   if (driver.capabilities.extensions && !driver.resolveExtensionPath) {
     throw new ExtensionError(
       extensionPath,
-      'The current driver declares extension support but resolves no absolute path, which would let the dynamic linker search its own paths',
+      'The current driver declares extension support but resolves no absolute path, which would let the dynamic linker search the system library paths',
     )
   }
 
@@ -68,7 +69,7 @@ export async function loadExtension(
   if (driver.resolveExtensionPath && !isAbsolutePath(resolved)) {
     throw new ExtensionError(
       extensionPath,
-      'The current driver resolved the extension to a relative path, which would let the dynamic linker search its own paths',
+      'The current driver resolved the extension to a relative path, which would let the dynamic linker search the system library paths',
     )
   }
 

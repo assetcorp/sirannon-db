@@ -68,8 +68,15 @@ describe('the status of each error', () => {
       ],
       ['a statement that a hook denies', 'orders', 'query', '{"sql":"SELECT 1 /* denied */"}', 403, 'HOOK_DENIED'],
       ['an internal table', 'orders', 'query', '{"sql":"SELECT * FROM _sirannon_meta"}', 403, 'FORBIDDEN_SQL'],
-      ['a hook that sets its own status', 'orders', 'query', '{"sql":"SELECT 1 /* teapot */"}', 418, 'TEAPOT'],
-      ['a code with no status of its own', 'orders', 'query', '{"sql":"SELECT 1 /* locked */"}', 500, 'LEDGER_LOCKED'],
+      ['a hook that sets a custom status', 'orders', 'query', '{"sql":"SELECT 1 /* teapot */"}', 418, 'TEAPOT'],
+      [
+        'an error with a code and no status',
+        'orders',
+        'query',
+        '{"sql":"SELECT 1 /* locked */"}',
+        500,
+        'LEDGER_LOCKED',
+      ],
       [
         'an error that is not a SirannonError',
         'orders',

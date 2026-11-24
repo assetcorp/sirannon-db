@@ -76,7 +76,7 @@ export function columnReadOptions(
 }
 
 /**
- * Returns the columns and rows of a read encoded for a network response, using the target's own wire read when it has
+ * Returns the columns and rows of a read encoded for a network response, using the target's wire read when it has
  * one and encoding the rows of its plain columns read otherwise.
  *
  * @param target - The database or proxy that executes the read.

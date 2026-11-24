@@ -1,6 +1,6 @@
 # Start a three-node Sirannon entitlement cluster
 
-In this example, Docker Compose deploys Sirannon as a three-node entitlement control plane that etcd coordinates. Each node has its own durable SQLite database. Sirannon replicates changes between those databases and uses etcd to manage primary authority and automatic failover.
+In this example, Docker Compose deploys Sirannon as a three-node entitlement control plane that etcd coordinates. Each node has a separate durable SQLite database. Sirannon replicates changes between those databases and uses etcd to manage primary authority and automatic failover.
 
 The application is a model of a SaaS entitlement service. It applies each billing event to the plan of a customer, and it decrements the quota for each usage event through an idempotent transaction. The dashboard shows the cluster state and the replicated data as they change.
 

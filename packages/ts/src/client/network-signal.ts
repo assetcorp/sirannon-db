@@ -4,7 +4,7 @@ interface OnlineEventTarget {
 }
 
 /**
- * The device's own report of its network, which a browser or a worker gives through `navigator.onLine` and the `online` event.
+ * The network state that the device reports, which a browser or a worker gives through `navigator.onLine` and the `online` event.
  *
  * @internal
  */

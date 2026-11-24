@@ -20,7 +20,7 @@ Over the network, an HTTP response and a WebSocket error message use the same sh
 { "error": { "code": "ERROR_CODE", "message": "Human-readable description", "details": {} } }
 ```
 
-The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, the `*_DEPENDENCY_MISSING` codes, and every code in the encryption table below, a client receives a fixed message for the code and no `details`, while the error that Sirannon raises on the server keeps the full message, including the path of the database file, the extension, or the SQLite build.
+The server leaves its file paths out of every reply. For `DATABASE_OPEN_FAILED`, `EXTENSION_ERROR`, `ROW_COUNTS_UNSUPPORTED`, the `*_DEPENDENCY_MISSING` codes, and every code in the encryption table below, a client receives a fixed message for the code and no `details`, while the error that Sirannon raises on the server keeps the full message, including the path of the database file, the extension, or the SQLite build.
 
 ## Core engine
 
@@ -39,7 +39,7 @@ The server keeps its own file paths out of every reply. For `DATABASE_OPEN_FAILE
 | - | `TRANSACTION_CLOSED` | A caller uses the `Transaction` handle from a `transaction` callback after that callback returns or throws |
 | - | `WRITER_HELD_BY_CALLBACK` | On the wa-sqlite or Expo driver, a caller reads, writes, migrates, backs up, or calls `watch` or `live` through the database while a `transaction` callback holds the writer; make the callback's reads and writes through its `Transaction` handle |
 | `HookDeniedError` | `HOOK_DENIED` | A before-hook throws to refuse the operation |
-| `RequestDeniedError` | the code you supply | Your `authenticate` hook throws it to refuse a request with a status and code of your own |
+| `RequestDeniedError` | the code you supply | Your `authenticate` hook throws it to refuse a request with a status and code that you choose |
 | `CDCError` | `CDC_ERROR` | Change data capture fails, or Sirannon cannot maintain a live query for the statement |
 | `BackupError` | `BACKUP_ERROR` | A backup fails |
 | - | `BACKUP_UNSUPPORTED` | The driver has no backup engine, or the database has no write-ahead log to capture |
@@ -206,7 +206,7 @@ Sirannon raises each of these codes as an `EncryptionError`. The [encryption gui
 
 ## Optional packages
 
-Sirannon raises these codes in your own process when it starts a server, a transport, or a coordinator. The message names the missing package and the command that installs it.
+Sirannon raises these codes in your process when it starts a server, a transport, or a coordinator. The message names the missing package and the command that installs it.
 
 | Code | When |
 | --- | --- |

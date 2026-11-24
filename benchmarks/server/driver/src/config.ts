@@ -283,7 +283,7 @@ function validate(config: Config): void {
   if (!Number.isInteger(config.sirannon.schemaTimeoutMs) || config.sirannon.schemaTimeoutMs <= 0) {
     throw new Error(
       `schema_timeout_ms must be an integer > 0; it bounds the schema-reset request, which has no other limit, ` +
-        `and it must exceed the engine's own worst-case reply, got ${config.sirannon.schemaTimeoutMs}`,
+        `and it must exceed the engine's worst-case reply time, got ${config.sirannon.schemaTimeoutMs}`,
     )
   }
   if (config.workloadTimeoutMs < 0) {

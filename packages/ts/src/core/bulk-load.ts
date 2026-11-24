@@ -70,7 +70,7 @@ function retriedRestore(writer: SQLiteConnection, restorePragma: string): () => 
  * `restoreBeforeNextWrite`, and the writer lock runs that retry before the
  * next operation that holds it, so that no later write can commit at the
  * relaxed level. While the retry fails, each of those operations fails with
- * 'DURABILITY_RESTORE_FAILED', or with the writer's own coded error, and does
+ * 'DURABILITY_RESTORE_FAILED', or with the coded error that the writer raised, and does
  * not run.
  *
  * After a load that committed and changed rows, this function checkpoints the
@@ -88,7 +88,7 @@ function retriedRestore(writer: SQLiteConnection, restorePragma: string): () => 
  * SQLite's automatic checkpoint keeps the WAL bounded at the relaxed level
  * without an fsync.
  *
- * On a database that captures its own change log, this function skips the
+ * On a database whose backup cycle captures its write-ahead log, this function skips the
  * checkpoint whatever the caller asked for, because a checkpoint before the
  * capture would let SQLite overwrite the frames that this load wrote. The
  * backup cycle checkpoints once it has captured those frames.

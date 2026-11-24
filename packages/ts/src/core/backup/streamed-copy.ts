@@ -100,7 +100,7 @@ async function recordedFailure(host: BackupStreamHost, streamId: number): Promis
 /**
  * Copies a database to a destination that the caller supplies, sending each
  * piece as SQLite writes it, so the backup needs no local disk. Sirannon points
- * the copy at its own virtual file system, which queues each piece for Sirannon
+ * the copy at the Sirannon virtual file system, which queues each piece for Sirannon
  * to send to the destination while SQLite goes on copying pages.
  *
  * @param conn - The writer connection, which SQLite runs the copy on.

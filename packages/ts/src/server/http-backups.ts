@@ -211,7 +211,7 @@ export function handleBackupVerify(sirannon: Sirannon): DbRouteHandler {
  * Handles the route that lists the backups that you no longer need for any restore.
  *
  * Sirannon lists them and deletes nothing, so the caller decides what to
- * delete from its own destination.
+ * delete from its destination.
  *
  * @param sirannon - The registry in which the server's databases are open.
  * @returns The handler that the server registers.

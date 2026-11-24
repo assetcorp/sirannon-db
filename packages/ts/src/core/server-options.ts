@@ -33,7 +33,7 @@ export interface RequestContext {
  * Identifies the caller behind a request. Return the identity, which the
  * server passes to the other hooks and uses to fill the `fromIdentity`
  * arguments of registered operations, or throw a {@link RequestDeniedError} to
- * reject the request with a status of your own.
+ * reject the request with a status that you choose.
  *
  * @public
  */
@@ -195,15 +195,15 @@ export interface ServerOptions<Identity = unknown> {
   cdcRetentionMs?: number
   /**
    * How long, in milliseconds, Sirannon keeps the changes that a device's sync
-   * cursor still needs before it drops the cursor; a database opened with its
-   * own `deviceCursorRetention` uses that value. The default is 2_592_000_000,
+   * cursor still needs before it drops the cursor; a database opened with a
+   * `deviceCursorRetention` setting uses that value. The default is 2_592_000_000,
    * 30 days.
    */
   deviceCursorRetentionMs?: number
   /**
    * The most changes that Sirannon keeps for one device's cursor before it
-   * drops the cursor; a database opened with its own `maxChangesHeldForDevice`
-   * uses that value. 0 sets no limit, and the default is 0.
+   * drops the cursor; a database opened with a `maxChangesHeldForDevice`
+   * setting uses that value. 0 sets no limit, and the default is 0.
    */
   maxChangesHeldForDevice?: number
   /** The number of changes that a device may leave unacknowledged before the server pauses sending more; the default is 1_000. */
@@ -244,7 +244,7 @@ export interface ServerOptions<Identity = unknown> {
   encryptionKeys?: (databaseId: string, keyRef: string) => EncryptionKey | Promise<EncryptionKey>
   /** Enables device sync, which covers the push, snapshot, and migration-list routes, device subscriptions, and acknowledgements; the default is false. The server constructor throws `INVALID_DEVICE_SYNC` when you enable it without an `authenticate` hook. */
   acceptDeviceSync?: boolean
-  /** Returns the target that the server executes a database's statements against; without it, the server uses the databases in its own registry. */
+  /** Returns the target that the server executes a database's statements against; without it, the server uses the databases in its registry. */
   resolveExecutionTarget?: ServerExecutionTargetResolver
   /** Returns the replication figures that the readiness endpoint reports. */
   getReplicationStatus?: () => ReplicationStatusInfo | null

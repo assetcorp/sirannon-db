@@ -4,7 +4,7 @@
   <img src="assets/replication-topology.svg" alt="Diagram of Sirannon's coordinator-backed replication. Clients write to the current primary and read from eligible nodes. The primary replicates to the replicas over gRPC with mutual TLS. A Sirannon controller performs failover through leases and atomic term updates in etcd." width="820">
 </p>
 
-One primary accepts writes and pushes its changes to read replicas, which serve reads and forward writes to the primary when `writeForwarding` is on. Each node opens its own SQLite file, so Sirannon moves checksummed batches of changes between the nodes over a replication transport.
+One primary accepts writes and pushes its changes to read replicas, which serve reads and forward writes to the primary when `writeForwarding` is on. Each node opens a separate SQLite file, so Sirannon moves checksummed batches of changes between the nodes over a replication transport.
 
 In this guide, you'll build `primary.ts` and `replica.ts`, and then `node-a.ts` for coordinator mode. Each file is a complete program.
 
@@ -84,7 +84,7 @@ The engine records and applies changes through the writer connection. `snapshotC
 
 ## Point a replica at the primary
 
-The replica opens its own file and dials the primary at the address in `transportConfig.endpoints`. In static mode, a replica opens no listening port, so its transport takes only the certificate paths. During first sync, the replica calls `watch` on each table that it copies, so `replica.ts` needs no `watch` call of its own:
+The replica opens a separate file and dials the primary at the address in `transportConfig.endpoints`. In static mode, a replica opens no listening port, so its transport takes only the certificate paths. During first sync, the replica calls `watch` on each table that it copies, so `replica.ts` needs no `watch` call:
 
 ```ts
 import { ChangeTracker, Sirannon } from '@delali/sirannon-db'
@@ -119,7 +119,7 @@ const engine = new ReplicationEngine(db, writerConn, {
 await engine.start()
 ```
 
-With `writeForwarding: true`, when you send a write to the replica's `engine.execute`, the replica forwards it to the primary, which then replicates it back. The replica sends your write concern with the write, and the primary waits for it, or for its own default when you state none, before it replies. When the primary raises an error, such as `WRITE_CONCERN_ERROR` or `STALE_PRIMARY`, the replica raises it to you with its code unchanged.
+With `writeForwarding: true`, when you send a write to the replica's `engine.execute`, the replica forwards it to the primary, which then replicates it back. The replica sends your write concern with the write, and the primary waits for it, or for its default when you state none, before it replies. When the primary raises an error, such as `WRITE_CONCERN_ERROR` or `STALE_PRIMARY`, the replica raises it to you with its code unchanged.
 
 `engine.executeTransaction` forwards a fixed list of statements in the same way, and the primary executes them in one transaction. `engine.transaction` takes a callback, so it executes only on a node that accepts writes. On the node that executes a statement, Sirannon calls the query hooks and the `onQueryComplete` callback of the registry that opened `db`. A forwarded write therefore reaches the primary's hooks and metrics, while a replica reports only the reads that it serves. To bill rows read and written, open `writerConn` through the same driver as the registry, created with `rowCounts: true`, because Sirannon reports neither count for a write on a connection that counts no rows.
 
@@ -200,7 +200,7 @@ await engine.execute('INSERT INTO orders (id, total) VALUES (?, ?)', [1, 4999], 
 
 Start `primary.ts` before `replica.ts`. When the primary stops, the replica keeps a reconnection timer pending, so the replica's process stays up while the primary is down. The replica's transport dials the primary again after 250 ms and doubles the wait after each failed attempt, up to 5,000 ms.
 
-In static mode, a write without `writeConcern` returns after the local commit, while in coordinator mode it waits for `'majority'`. In coordinator mode, the engine counts the configured voting nodes towards `'majority'`, including the primary's own durable commit, so a majority write is still present after an automatic failover that loses only the primary.
+In static mode, a write without `writeConcern` returns after the local commit, while in coordinator mode it waits for `'majority'`. In coordinator mode, the engine counts the configured voting nodes towards `'majority'`, including the durable commit on the primary, so a majority write is still present after an automatic failover that loses only the primary.
 
 ## Read concern
 
@@ -293,7 +293,7 @@ const engine = new ReplicationEngine(db, writerConn, {
 await engine.start()
 ```
 
-Your etcd cluster has its own certificate authority, so ask whoever operates that cluster for the three files under `credentials`.
+Your etcd cluster has a separate certificate authority, so ask whoever operates that cluster for the three files under `credentials`.
 
 Give every coordinator-mode node a `nodeId` that stays the same across restarts. Put at least three voting data-bearing nodes in the group for automatic write failover, because when one node of a two-node group fails, the remaining node holds no majority and cannot take over writes. In production, connect to etcd over HTTPS with an authenticated identity, and keep the in-memory coordinator and `allowInsecure: true` for tests.
 
@@ -325,7 +325,7 @@ The bump keeps every revision of the restored cluster above the revisions that t
 
 When the nodes reach an etcd cluster that holds none of their sessions, such as one that you built anew, each node registers its session again at its next renewal, which comes every third of its session TTL and at least one second apart. Because of that one-second floor, the engine refuses a `sessionTtlMs` of 1,000 or less with a `RangeError`, since such a session lapses between renewals.
 
-A controller that takes the lease must not promote a replica over a primary whose live session it has not read since taking the lease until one full session lease length, as configured on the controller's own node, has passed since it took the lease. That wait gives every node time to register its session again with a coordinator that lost the sessions, such as one restored from a backup or built anew. Once the controller has read the primary's live session, the wait no longer applies to that primary, and the controller can promote a replica on its first check after that session lapses. Every node in a cluster must use the same session lease length, which is `sessionTtlMs`.
+A controller that takes the lease must not promote a replica over a primary whose live session it has not read since taking the lease until one full session lease length, as configured on the controller's node, has passed since it took the lease. That wait gives every node time to register its session again with a coordinator that lost the sessions, such as one restored from a backup or built anew. Once the controller has read the primary's live session, the wait no longer applies to that primary, and the controller can promote a replica on its first check after that session lapses. Every node in a cluster must use the same session lease length, which is `sessionTtlMs`.
 
 ### Upgrading a group from 0.4
 
@@ -351,7 +351,7 @@ Write a custom resolver as a class with a `resolve(ctx: ConflictContext): Confli
 | --- | --- | --- |
 | gRPC | `@delali/sirannon-db/transport/grpc` | Use it for production replication between machines over TLS. |
 | In-Memory | `@delali/sirannon-db/transport/memory` | Use it for tests and for several nodes in one process. |
-| Custom | Your own module | Write any class that implements the `ReplicationTransport` interface. |
+| Custom | A module that you write | Write any class that implements the `ReplicationTransport` interface. |
 
 A `ReplicationTransport` moves change batches, acknowledgements, forwarded writes, and first-sync data between nodes. The client's `Transport` interface is a separate contract, which the [client guide](client.md) describes.
 
@@ -359,7 +359,7 @@ A `ReplicationTransport` moves change batches, acknowledgements, forwarded write
 
 ### Is this SQLite over a shared network file system?
 
-No, each node opens its own local SQLite file. Sirannon moves changes between the nodes through a replication transport, while applications reach the data through the HTTP and WebSocket server.
+No, each node opens a separate local SQLite file. Sirannon moves changes between the nodes through a replication transport, while applications reach the data through the HTTP and WebSocket server.
 
 ### What kind of replication is it?
 
@@ -377,11 +377,11 @@ In coordinator mode, a former primary that returns with writes that no other nod
 
 ### What happens under a network partition?
 
-Static primary-replica mode has no failover of its own, so writes fail until an operator or an external system promotes another node and points the clients at it. In coordinator mode, the controller works from the cluster coordinator's primary terms, node leases, and in-sync sets, and it promotes only a replica that the coordinator lists as in sync. When a node cannot confirm with the coordinator that it holds write authority, it rejects every write with an error code.
+Static primary-replica mode has no automatic failover, so writes fail until an operator or an external system promotes another node and points the clients at it. In coordinator mode, the controller works from the cluster coordinator's primary terms, node leases, and in-sync sets, and it promotes only a replica that the coordinator lists as in sync. When a node cannot confirm with the coordinator that it holds write authority, it rejects every write with an error code.
 
 ### What does majority write concern mean?
 
-In coordinator mode, Sirannon counts the configured voting data-bearing nodes in the replication group towards `majority`, including the primary's own durable commit. A majority write is still present after an automatic failover that loses only the primary, as long as an eligible in-sync replica remains.
+In coordinator mode, Sirannon counts the configured voting data-bearing nodes in the replication group towards `majority`, including the durable commit on the primary. A majority write is still present after an automatic failover that loses only the primary, as long as an eligible in-sync replica remains.
 
 ### Does it replicate schema changes?
 

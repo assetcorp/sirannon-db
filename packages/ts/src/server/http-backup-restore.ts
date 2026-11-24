@@ -123,7 +123,7 @@ export function handleBackupRestore(sirannon: Sirannon, accepted: boolean, runs:
 /**
  * Handles the route that reports the state of one database's restore.
  *
- * It reads the server's own record, so that it can answer while the database
+ * It reads the record that the server keeps, so that it can answer while the database
  * is closed for the restore.
  *
  * @param runs - The server's record of each restore.

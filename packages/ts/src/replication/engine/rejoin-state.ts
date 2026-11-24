@@ -10,7 +10,7 @@ export class RejoinState {
   /**
    * Is true from the moment that this node, while it serves its data, starts the rebuild that the group's repairing
    * flag asks for, until the copy finishes or an operator clears the flag before the copy starts. The operator's flag
-   * covers that rebuild, so the node writes no repairing flag of its own over an operator's later change to it.
+   * covers that rebuild, so the node leaves an operator's later change to that flag in place.
    */
   rebuildingForRepairFlag = false
   /** Identifies the current repair request, so that a cancelled request cannot start a later copy. */

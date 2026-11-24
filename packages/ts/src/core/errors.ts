@@ -1,6 +1,6 @@
 /**
  * The base class for every sirannon-db error, which has a machine-readable
- * {@link SirannonError.code}. Extend it to define an error of your own.
+ * {@link SirannonError.code}. Extend it to define a custom error.
  *
  * @public
  */
@@ -77,7 +77,7 @@ export class QueryError extends SirannonError {
 /**
  * Sirannon raises this error when SQLite refuses to commit a transaction whose
  * statements all succeeded, such as on a deferred foreign key; `cause` holds
- * SQLite's own error. The server responds to its `TRANSACTION_ERROR` code with status 400.
+ * the error that SQLite raised. The server responds to its `TRANSACTION_ERROR` code with status 400.
  *
  * @public
  */
@@ -127,7 +127,7 @@ export class HookDeniedError extends SirannonError {
 }
 
 /**
- * Rejects one request with a status of your own; throw it from an authenticate hook or a registered operation.
+ * Rejects one request with a status that you choose; throw it from an authenticate hook or a registered operation.
  *
  * @public
  */

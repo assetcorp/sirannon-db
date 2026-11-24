@@ -14,7 +14,7 @@ const SCHEMA_WORD_RE = /\b(?:CREATE|ALTER|DROP)\b/i
  * the change log: each table that `tracker` watches, and each table that carries change-capture triggers from another
  * process or an earlier session.
  *
- * The returned tracker belongs to the migration alone, so the database's own tracker keeps its watched set.
+ * Only the migration uses the returned tracker, so the tracker that the database holds keeps its watched set.
  *
  * @param conn - The writer connection.
  * @param tracker - The database's change tracker, or `null` when this process has watched nothing.

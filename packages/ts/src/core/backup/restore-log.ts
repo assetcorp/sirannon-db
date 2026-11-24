@@ -141,9 +141,9 @@ function randomSalt(): number {
  * pieces.
  *
  * A destination stores each frame as Sirannon captured it, with the salts and
- * the running checksum of its original log. This writer writes its own salts
- * over them and recomputes the checksum from its own header, so that a batch
- * can start part-way along a chain.
+ * the running checksum of its original log. This writer writes the salts of the
+ * log that it builds over them and recomputes the checksum from that log's
+ * header, so that a batch can start part-way along a chain.
  *
  * @internal
  */

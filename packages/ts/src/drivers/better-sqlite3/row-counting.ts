@@ -139,7 +139,7 @@ function runEach(
 }
 
 /**
- * Executes a statement once for each parameter set and returns one result per set, each with its own row counts.
+ * Executes a statement once for each parameter set and returns one result per set, each with the row counts of that set.
  *
  * @param stmt - A statement prepared on Sirannon's SQLite build.
  * @param paramsBatch - One parameter set for each execution.

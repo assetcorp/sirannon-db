@@ -104,7 +104,7 @@ export async function deletePrimaryTermStart(conn: SQLiteConnection): Promise<vo
 }
 
 /**
- * Returns the primary term whose history this node last reconciled its own with, or null before the first time.
+ * Returns the primary term whose history this node last reconciled its history with, or null before the first time.
  *
  * @param conn - The connection to read through.
  * @returns The recorded term, or null when none is recorded or the stored value is malformed.
@@ -118,7 +118,7 @@ export async function selectAnchoredTerm(conn: SQLiteConnection): Promise<bigint
 }
 
 /**
- * Records the primary term whose history this node has reconciled its own with.
+ * Records the primary term whose history this node has reconciled its history with.
  *
  * @param conn - The connection to write through.
  * @param term - The reconciled term.

@@ -37,7 +37,7 @@ const SERVER_FAULT_MESSAGES: ReadonlyMap<string, string> = new Map([
 /**
  * Returns the message that the server sends a client for an error. An error that reports how the server itself is
  * set up, such as a database file that fails to open, a missing package, or a SQLite build that cannot count rows,
- * names server file paths in its own message, so the client receives a fixed message for its code, and the operator
+ * includes server file paths in its message, so the client receives a fixed message for its code, and the operator
  * keeps the full message on the error.
  *
  * @param err - The error that the request raised.

@@ -11,7 +11,7 @@ const MIN_OUTBOX_COUNT_INTERVAL_MS = 100
  * memory, so the notifier captures each transition when it happens and keeps
  * every one, however short-lived. It calls the listener with the captured
  * statuses on a microtask, in the order that they occur, outside the
- * controller's own call stack.
+ * controller's call stack.
  *
  * The pending push count is the one field that needs an outbox read through the
  * write gate, so the notifier refreshes it in the background at most once every

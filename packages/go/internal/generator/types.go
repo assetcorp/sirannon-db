@@ -369,7 +369,7 @@ func (p *planner) aliasPlan(def *definition) (string, *stringPlan) {
 		}
 		return p.goType(alias, name), nil
 	case kindNullable:
-		failf("The schema %s is only a nullable value, which needs no Go type of its own", def.name)
+		failf("The schema %s is only a nullable value, which needs no separate Go type", def.name)
 	}
 	return p.goType(alias, name), nil
 }

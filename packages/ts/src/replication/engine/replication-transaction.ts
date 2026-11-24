@@ -9,7 +9,7 @@ import { replicatedSchemaChangeOf } from './schema-statement.js'
  * transaction.
  *
  * After each DDL statement succeeds, `execute` sets `sawDdl` and awaits
- * `onDdl`, which writes a synthetic `__ddl__` CDC row on the transaction's own
+ * `onDdl`, which writes a synthetic `__ddl__` CDC row on the transaction's
  * connection. `onDdl` writes that row inside the open transaction, so that
  * `stampChanges` and `updateColumnVersions` include it and SQLite rolls it back
  * if the caller's callback throws.

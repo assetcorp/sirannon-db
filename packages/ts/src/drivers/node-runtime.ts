@@ -10,7 +10,7 @@ import { resolveVfsExtensionPath } from './vfs-library.js'
  * @internal
  */
 export interface NodeStreamingOptions {
-  /** The driver through which the engine opens its own connection. */
+  /** The driver through which the engine opens a separate connection. */
   driver: SQLiteDriver
   /** `true` when SQLite parses URI file names in this runtime, since Sirannon names the destination through a URI. */
   uriFilenames: boolean

@@ -225,7 +225,7 @@ jobs:
           name: sirannon-vfs-linux-x64-musl
           path: native/npm/linux-x64/musl
 
-      - name: Run the streamed backup suite on Node's own SQLite
+      - name: Run the streamed backup suite on Node's built-in SQLite
         working-directory: packages/ts
         run: pnpm vitest run src/__tests__/integration/backups/streamed-node-sqlite
 
@@ -246,7 +246,7 @@ jobs:
           name: sirannon-vfs-linux-arm64-musl
           path: native/npm/linux-arm64/musl
 
-      - name: Run the streamed backup suite on Node's own SQLite inside Alpine
+      - name: Run the streamed backup suite on Node's built-in SQLite inside Alpine
         run: >-
           docker run --rm -e SIRANNON_REQUIRE_STREAMING_EXTENSION=1 -v "$PWD:/work" -w /work node:24-alpine sh -euc
           'corepack enable pnpm && pnpm install --frozen-lockfile --ignore-scripts &&

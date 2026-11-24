@@ -2,7 +2,7 @@ import type { ChangeTracker } from '../cdc/change-tracker.js'
 import type { SQLiteConnection } from '../driver/types.js'
 
 /**
- * Names whether a node records each schema change that it applies from a peer in its own change log. A node in a
+ * States whether a node records each schema change that it applies from a peer in its change log. A node in a
  * coordinator group uses `'logged'`, so that its change-log history holds every schema change that it applied, and
  * every other node uses `'unlogged'`.
  *

@@ -33,7 +33,7 @@ export interface DatabaseWriteDeps {
 
 function bulkLoadInsideTransaction(): SirannonError {
   return new SirannonError(
-    'bulkLoad commits in a transaction of its own at a relaxed synchronous level, so a call inside another transaction fails; call executeBatch on that transaction to write the rows',
+    'bulkLoad commits in a separate transaction at a relaxed synchronous level, so a call inside another transaction fails; call executeBatch on that transaction to write the rows',
     'BULK_LOAD_IN_TRANSACTION',
   )
 }

@@ -20,7 +20,7 @@ export type WorkerHostRequest = (
 ) => Promise<unknown>
 
 /**
- * The connection calls that the writer worker host implements itself, because they track the host's own state.
+ * The connection calls that the writer worker host implements itself, because they track state that the host holds.
  *
  * @internal
  */

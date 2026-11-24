@@ -15,7 +15,7 @@ Without a configured coordinator, Sirannon remains a static primary-replica depl
 
 Coordinator mode adds these rules to Sirannon:
 
-- Primary authority is scoped per replication group, not per process. A process can host databases from more than one group, and each group has its own current primary and primary term.
+- Primary authority is scoped per replication group, not per process. A process can host databases from more than one group, and each group has a separate current primary and primary term.
 - A node may accept writes for a group only while it can prove current coordinator authority for that group. If authority renewal or verification fails, the node fails closed for new writes and fails in-flight writes that cannot prove current authority.
 - A promotion increments the group's primary term through an atomic coordinator write. Replication messages, forwarded writes, and write handling carry the current term. Nodes reject stale terms and non-current primaries.
 - A replica is promotable only when its node lease is alive, it is in the group's in-sync set, it has no known storage or sync error, and the promotion can atomically advance the primary term.

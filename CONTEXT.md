@@ -12,7 +12,7 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 ## Metrics
 
 - **Rows read** is the number of table and index rows that SQLite's cursors move to while SQLite executes a statement, following the rules that Cloudflare D1 publishes, so a scan of 5,000 rows that returns five rows has 5,000 rows read. Sirannon's change-capture triggers add nothing to it.
-- **Rows written** is the number of table rows that a statement inserts, updates, or deletes, plus the index entries that it inserts, including the writes of the caller's own triggers. Sirannon's change-capture triggers add nothing to it.
+- **Rows written** is the number of table rows that a statement inserts, updates, or deletes, plus the index entries that it inserts, including the writes of the triggers that the caller defined. Sirannon's change-capture triggers add nothing to it.
 
 ## Replication groups
 
@@ -21,7 +21,7 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 - The **durability point** is the position in the primary's change log that a copy must hold before the primary admits it to the in-sync set. From feature level 2, the primary sets it only when its term starts.
 - A group's **feature level** records which rules its copies follow. Every copy registers the highest level that it supports, and an operator raises the group's level once every copy supports the new one.
 - A copy **drains** when an operator takes it out of service. A draining copy takes no writes and leaves the in-sync set, and a draining primary hands its duty to another copy.
-- A **rebuild in place** is a copy that restarts under its own node ID with an empty or replaced file and copies the whole database from the primary. It rejoins the in-sync set only once it proves that it holds every acknowledged write.
+- A **rebuild in place** is a copy that restarts under its existing node ID with an empty or replaced file and copies the whole database from the primary. It rejoins the in-sync set only once it proves that it holds every acknowledged write.
 
 ## Clients, devices, and nodes
 
@@ -35,7 +35,7 @@ This file holds the terms this repository uses with a fixed meaning, so a conver
 - A **full copy** is a complete, openable SQLite file produced by the stepped backup interface on the connection that writes, so writes continue in the gaps between its steps.
 - A **change piece** captures the write-ahead log frames written since the previous backup, so its size scales with what changed rather than with the size of the database.
 - The **chain position** is the always-increasing marker recording where in the database's change sequence a piece starts and ends. Every completion report carries it, and the next change piece starts from it.
-- A **destination** is the caller-supplied set of directions Sirannon moves backup bytes through: write a piece, read a piece, and list pieces. Pieces are fixed in size and arrive in any order, because SQLite writes page one last. Sirannon carries no storage client of its own.
+- A **destination** is the caller-supplied set of directions Sirannon moves backup bytes through: write a piece, read a piece, and list pieces. Pieces are fixed in size and arrive in any order, because SQLite writes page one last. Sirannon includes no storage client.
 - The **checkpoint cycle** is Sirannon capturing the log frames and then folding the log back into the main file, in that order. SQLite's automatic checkpointing is off wherever backups are on, because a checkpoint Sirannon did not choose overwrites frames it has yet to capture.
 - The **streaming extension** is the compiled SQLite VFS Sirannon owns, published as one optional npm package per platform, which delivers a full copy to a destination without writing a local file. Where no binary exists for a platform, the **staged fallback** writes a temporary local file first and declares that it did.
 - A **capability report** is how a runtime states which backup operations it supports, so a caller learns before running that a browser hands over whole databases only.

@@ -14,7 +14,7 @@ function boundFileSystem(files: DatabaseFileSystem): DatabaseFileSystem {
 /**
  * Returns a frozen {@link SQLiteDriver} that holds your implementation's capabilities, its `open` function, and only the optional members that Sirannon supports.
  *
- * Sirannon binds each of those functions to `config`, so that a method of a class instance can read the instance's own fields through `this`.
+ * Sirannon binds each of those functions to `config`, so that a method of a class instance can read the fields of that instance through `this`.
  *
  * @param config - The driver implementation, which can be a plain object or an instance of a class.
  * @returns The driver, which you can pass to a `Sirannon` registry.

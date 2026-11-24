@@ -163,7 +163,7 @@ export async function checkpointWithoutCapturing(request: {
  * Looks for a chain in the list of chains at its destination, and returns a
  * `BACKUP_CHAIN_BROKEN` error where the list no longer names it.
  *
- * Another node that writes its own chain at the same moment can replace the
+ * Another node that writes a separate chain at the same moment can replace the
  * entry for this chain, which puts every record under this chain out of reach
  * of a restore.
  *
@@ -229,7 +229,7 @@ export function unclaimableChainList(
   return new SirannonError(
     `The backups of database '${request.databaseId}' belong to a replication group, and this destination offers no writePieceIfAbsent. ` +
       `Two nodes starting a chain at the same moment would each replace the record listing the other's in '${chainName}'. ` +
-      'Give the destination that function, or give each node a chainName of its own.',
+      'Give the destination that function, or give each node a different chainName.',
     'BACKUP_DESTINATION_ERROR',
   )
 }

@@ -16,7 +16,7 @@ export interface BackupPiece {
  * Sirannon can write the pieces in any order, because SQLite writes page one
  * last. A backup chain uses several
  * names, since Sirannon stores its full copy, each change piece, and the list
- * of its records under names of their own.
+ * of its records under separate names.
  *
  * @public
  */

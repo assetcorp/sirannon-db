@@ -33,7 +33,7 @@ export interface SubscribeOptions {
    * state as stale and read it again.
    */
   onReset?: () => void
-  /** The identifier of the device that opens this subscription, so that the server can leave that device's own writes out of the stream. */
+  /** The identifier of the device that opens this subscription, so that the server can leave the writes that the device made out of the stream. */
   deviceId?: string
   /** The tables that one subscription covers, so the client receives a transaction that spans them as one stream in ascending order. */
   tables?: readonly string[]

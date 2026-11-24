@@ -32,7 +32,7 @@ await orders.close()
 
 Each `ResultOp` is `{ op: 'insert', index, row }`, `{ op: 'update', index, row }`, or `{ op: 'delete', index }`. When you apply the operations in order, your copy holds the same rows as the query. Code that only renders the result can call `getState()` and skip the operations.
 
-Each live query has its own temporary probe table, whose columns match the declared types and collations of the base table. Sirannon writes the row as it stood before and after every change into that table, and then it evaluates the statement's own `WHERE` clause and select list over those rows, so affinity, collation, and `ORDER BY` behave as they do in a read of the base table. Closing the query drops that table.
+Each live query has a separate temporary probe table, whose columns match the declared types and collations of the base table. Sirannon writes the row as it stood before and after every change into that table, and then it evaluates the statement's `WHERE` clause and select list over those rows, so affinity, collation, and `ORDER BY` behave as they do in a read of the base table. Closing the query drops that table.
 
 ### When the statement runs again
 
@@ -66,7 +66,7 @@ The server sends the rows in its reply to the subscription, so the client needs 
 
 A live query needs the WebSocket transport and fails with `TRANSPORT_ERROR` over HTTP. While the connection is down, the query keeps its rows and reports `revalidating`. When the connection returns, the transport subscribes again and the server sends the rows afresh, because the server holds the result and the client resumes by subscribing, not from a cursor.
 
-A remote live query takes no options. The server opens the query with its own defaults, so `rereadJitterMs` and `maxTransactionChanges` apply only to a local `db.live`. A remote live query on an in-memory database fails with `CDC_UNSUPPORTED`.
+A remote live query takes no options. The server opens the query with its defaults, so `rereadJitterMs` and `maxTransactionChanges` apply only to a local `db.live`. A remote live query on an in-memory database fails with `CDC_UNSUPPORTED`.
 
 ## In React
 

@@ -171,7 +171,7 @@ export interface SQLiteConnection {
   close(): Promise<void>
   /**
    * Loads a compiled SQLite extension into this connection through the
-   * runtime's own loading function, so that queries on this connection can
+   * loading function that the runtime provides, so that queries on this connection can
    * call the extension's functions. SQLite registers those functions on the
    * loading connection alone, so load the extension on every connection that
    * calls them. When the runtime has no loading function, the returned promise
@@ -192,7 +192,7 @@ export interface SQLiteConnection {
   copyDatabase?(request: DatabaseCopyRequest): Promise<DatabaseCopyStep>
   /**
    * `true` when the runtime steps this connection's copy on a thread other
-   * than the caller's. A copy on its own thread can pause until the caller
+   * than the caller's. A copy on a separate thread can pause until the caller
    * catches up, while a pause on the caller's thread would block the only
    * thread.
    */
@@ -262,7 +262,7 @@ export interface OpenOptions {
   synchronous?: SynchronousLevel
   /**
    * The number of frames in the write-ahead log at which SQLite checkpoints it
-   * automatically. Set it to zero when Sirannon captures the database's own
+   * automatically. Set it to zero when Sirannon captures the database's
    * log, because an automatic checkpoint lets SQLite overwrite frames that the
    * backup has yet to capture.
    *
@@ -346,13 +346,13 @@ export interface SQLiteDriver {
   createWriterContext?(): WriterContext
   /**
    * Returns the engine that copies a database to a file. Sirannon passes the
-   * driver back in, so that the engine can open its own connection for a
+   * driver back in, so that the engine can open a separate connection for a
    * streamed copy, which loads the extension that moves the bytes.
    */
   createBackupEngine?(driver: SQLiteDriver): BackupEngine
   /**
    * Returns an extension path in absolute form. When `load_extension` receives
-   * a bare name, the dynamic linker searches its own paths and can open a
+   * a bare name, the dynamic linker searches the system library paths and can open a
    * different library from the one that the operator named.
    */
   resolveExtensionPath?(extensionPath: string): string

@@ -47,10 +47,10 @@ function reconcilesTermHistory(engine: ReplicationEngine): boolean {
  * Returns whether this replica has reconciled its history with the current primary's, which it must do before it
  * applies a batch or reports a position in that primary's log. A former primary reconciles as any replica does once
  * the group has moved to a later term. A primary in the term whose history it holds, and a repairing or faulted node,
- * rejoin through their own paths, so this check passes for them.
+ * rejoin through separate paths, so this check passes for them.
  *
  * @param engine - The replica's engine.
- * @returns True outside coordinator mode and for a node that rejoins through its own path, and otherwise true only for
+ * @returns True outside coordinator mode and for a node that rejoins through a separate path, and otherwise true only for
  * the current term.
  *
  * @internal
@@ -66,8 +66,8 @@ export function isAnchoredToCurrentTerm(engine: ReplicationEngine): boolean {
  * history the replica has not reconciled: the replica asks the primary where their histories meet and keeps serving its
  * data until the answer arrives. It sends the request again when no answer arrives within `syncAckTimeoutMs`.
  *
- * A primary and a node that held primary authority in the current term start nothing, because the primary's history
- * is their own. A repairing or faulted node and a node that is still copying start nothing either, because the repair
+ * A primary and a node that held primary authority in the current term start nothing, because each of them holds the
+ * primary's history. A repairing or faulted node and a node that is still copying start nothing either, because the repair
  * and copy paths reconcile them.
  *
  * @param engine - The replica's engine.

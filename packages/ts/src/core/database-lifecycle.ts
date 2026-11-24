@@ -134,7 +134,7 @@ export class DatabaseLifecycle {
 
   /**
    * Throws `WRITER_HELD_BY_CALLBACK` while a transaction callback holds the writer on a driver that has no async
-   * context to tell the callback's own calls from other callers, so that a call that the callback awaits fails at once
+   * context to tell the calls that the callback makes from the calls of other callers, so that a call that the callback awaits fails at once
    * and never waits for the callback to end.
    *
    * @internal

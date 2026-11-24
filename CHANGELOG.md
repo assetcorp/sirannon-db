@@ -161,7 +161,7 @@
 
 - **benchmarks:** keep VM-only run logs when syncing the cloud checkout ([a1c0a35](https://github.com/assetcorp/sirannon-db/commit/a1c0a35))
 - **benchmarks:** keep unfetched runs on sync and clean up partial cloud setups ([2ebab52](https://github.com/assetcorp/sirannon-db/commit/2ebab52))
-- **replication:** rebuild an emptied copy under its own node ID and admit it only by proof ([ea01d1e](https://github.com/assetcorp/sirannon-db/commit/ea01d1e))
+- **replication:** rebuild an emptied copy under its existing node ID and admit it only by proof ([ea01d1e](https://github.com/assetcorp/sirannon-db/commit/ea01d1e))
 - **replication:** always accept removing a pending voter and record the first term before creating a group ([a94dcef](https://github.com/assetcorp/sirannon-db/commit/a94dcef))
 - **server:** close a WebSocket upgrade that the authenticate hook refuses after a wait ([827a937](https://github.com/assetcorp/sirannon-db/commit/827a937))
 - **ts:** log REPLACE deletes and reject stale transaction handles ([371cf05](https://github.com/assetcorp/sirannon-db/commit/371cf05))
@@ -285,7 +285,7 @@
 - **docs:** correct number of C files in backup ADR 0007 ([d72ccad](https://github.com/assetcorp/sirannon-db/commit/d72ccad))
 - **spec:** clarify backup error handling ([87d27c4](https://github.com/assetcorp/sirannon-db/commit/87d27c4))
 - **ts:** address tab locking issue ([110c6f0](https://github.com/assetcorp/sirannon-db/commit/110c6f0))
-- **ts:** load SQLite extensions through each runtime's own call ([3066d8f](https://github.com/assetcorp/sirannon-db/commit/3066d8f))
+- **ts:** load SQLite extensions through the loading call of each runtime ([3066d8f](https://github.com/assetcorp/sirannon-db/commit/3066d8f))
 - **ts:** reject relative paths in extension loading and enhance connection handling ([172504b](https://github.com/assetcorp/sirannon-db/commit/172504b))
 - **ts:** address issues with database lifecycle management and backup processes ([87f5bb6](https://github.com/assetcorp/sirannon-db/commit/87f5bb6))
 - **ts:** clear optionalDependencies in package.json for better package management ([5b66069](https://github.com/assetcorp/sirannon-db/commit/5b66069))

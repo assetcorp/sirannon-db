@@ -1,6 +1,6 @@
 # A rebuilt copy keeps its node ID, and the group trusts it only once it proves that it is current
 
-When an operator moves a copy of a replicated database to another server or replaces its disk, the copy restarts under its own node ID with an empty or replaced file. In coordinator mode, that copy used to keep its place in the in-sync set across the restart, so the controller could promote an empty file that then refused every read and write. The primary also counted the acknowledgements that the copy had sent before the restart, which let it readmit a copy whose full copy had not finished. This decision replaces the rule in `packages/spec/09-failover.md` that gives a new empty node a new identity.
+When an operator moves a copy of a replicated database to another server or replaces its disk, the copy restarts under its existing node ID with an empty or replaced file. In coordinator mode, that copy used to keep its place in the in-sync set across the restart, so the controller could promote an empty file that then refused every read and write. The primary also counted the acknowledgements that the copy had sent before the restart, which let it readmit a copy whose full copy had not finished. This decision replaces the rule in `packages/spec/09-failover.md` that gives a new empty node a new identity.
 
 ## Why this over the alternatives
 

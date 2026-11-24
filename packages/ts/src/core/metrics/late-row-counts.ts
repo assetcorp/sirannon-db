@@ -36,8 +36,8 @@ export function withLateRowCounts<E extends object>(error: E, counts: LateRowCou
 }
 
 /**
- * Marks the work that an error failed as none of the caller's own statements, so that the metrics add nothing for it
- * when the writer worker answers, as for Sirannon's own bookkeeping statements around a write.
+ * Marks the work that an error failed as none of the caller's statements, so that the metrics add nothing for it
+ * when the writer worker answers, as for the bookkeeping statements that Sirannon executes around a write.
  *
  * @param error - The error that the bookkeeping statement raised.
  * @returns `error` itself.

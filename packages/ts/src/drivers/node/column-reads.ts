@@ -27,7 +27,8 @@ interface StatementWithColumns {
 
 /**
  * Returns whether this Node.js release's `node:sqlite` reports each column's details and returns rows as arrays,
- * which needs `StatementSync.columns` from Node.js 22.16 and `StatementSync.setReturnArrays` from Node.js 24.0.
+ * which needs both `StatementSync.columns` and `StatementSync.setReturnArrays`. Node.js 24 has both, and so does Node.js
+ * 22.23.5, while earlier Node.js 22 releases lack at least one of them.
  *
  * @returns `true` when both calls exist.
  * @internal
@@ -53,7 +54,9 @@ function columnDetailsOf(stmt: StatementWithColumns): ColumnDetail[] {
 
 /**
  * Executes a statement and returns its column details with each row as an array, stepping one row at a time while
- * the read carries a limit and reading every row in one call while it carries none.
+ * the read carries a limit and reading every row in one call while it carries none. When that one call returns rows
+ * narrower than the statement's columns, as node:sqlite in Node.js 22 does after a schema change, it reads the rows
+ * again one at a time, so that every row holds one value for each column.
  *
  * @param statement - The node:sqlite statement, which reads integers as `bigint`.
  * @param limits - The row and byte limits of the read.
@@ -71,8 +74,13 @@ export function readWithColumns(
   stmt.setReturnArrays(true)
   try {
     if (!limitsRows(limits)) {
-      const rows = unlimitedRows(stmt.all(...bound) as unknown[][], limits)
-      return { columns: columnDetailsOf(stmt), rows, truncated: null }
+      const rows = stmt.all(...bound) as unknown[][]
+      const columns = columnDetailsOf(stmt)
+      if (rows.length === 0 || rows[0].length === columns.length) {
+        return { columns, rows: unlimitedRows(rows, limits), truncated: null }
+      }
+      const stepped = unlimitedRows([...(stmt.iterate(...bound) as IterableIterator<unknown[]>)], limits)
+      return { columns: columnDetailsOf(stmt), rows: stepped, truncated: null }
     }
     const collector = new RowCollector(limits)
     for (const row of stmt.iterate(...bound) as IterableIterator<unknown[]>) {

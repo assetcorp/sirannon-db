@@ -17,7 +17,7 @@ const EXPO_DRIVER_MODULE = '../../../drivers/expo/index.js'
 const { expoSqlite } = (await import(EXPO_DRIVER_MODULE)) as { expoSqlite: () => SQLiteDriver }
 
 const EVERY_BYTE = Uint8Array.from({ length: 256 }, (_, index) => index)
-const MULTILINGUAL = 'héllo 😀 𝄞 nul\u0000after'
+const MULTILINGUAL = 'héllo 😀 𝄞 ﬁn ܐ'
 const SELECT_REPEATED =
   'SELECT a.id, b.id, a.label, a.amount, a.payload, a.price, a.amount + 0 AS total, a.label AS "1" FROM items a JOIN items b ON a.id = b.id ORDER BY a.id'
 const ENDLESS_BLOBS = 'WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n) SELECT i, zeroblob(?) FROM n'

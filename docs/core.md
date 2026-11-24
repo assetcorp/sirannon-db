@@ -53,7 +53,7 @@ Each entry of `columns` holds `name`, `declaredType`, `table`, `column`, and `da
 | Driver | Details it reports |
 | --- | --- |
 | better-sqlite3 | All five |
-| node:sqlite | All five, on Node.js 24 or later. On Node.js 22 the driver's `columnDetails` capability is `false`, so the call fails with `COLUMN_DETAILS_UNSUPPORTED` |
+| node:sqlite | All five, on Node.js 24 and on Node.js 22.23.5. On a Node.js 22 release whose `StatementSync` lacks `columns()` or `setReturnArrays()`, the driver's `columnDetails` capability is `false`, so the call fails with `COLUMN_DETAILS_UNSUPPORTED` |
 | Bun | `name` and `declaredType` |
 | wa-sqlite and Expo | `name` |
 

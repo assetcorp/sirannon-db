@@ -39,7 +39,12 @@ function bodyFor(route: string, sql: string): Record<string, unknown> {
   if (route === 'transaction')
     return { statements: [{ sql: INSERT_NOTE, params: ['first in the transaction'] }, { sql }] }
   if (route === 'batch' || route === 'load') return { sql, paramsBatch: [[]] }
+  if (route === 'columns') return { sql, shape: 'columns', maxRows: 5, maxBytes: 4096 }
   return { sql }
+}
+
+function routePath(route: string): string {
+  return route === 'columns' ? 'query' : route
 }
 
 beforeEach(async () => {
@@ -105,6 +110,16 @@ describe("statements that reach Sirannon's own tables, the SQLite catalogue, or 
       "UPDATE sqlite_master SET sql = 'x'",
       "INSERT INTO sqlite_master VALUES ('table', 'ghost', 'ghost', 0, 'CREATE TABLE ghost (x)')",
       'WITH doomed AS (SELECT 1) DELETE FROM sqlite_sequence',
+      "SELECT * FROM '_sirannon_changes'",
+      "SELECT * FROM main.'_sirannon_meta'",
+      "SELECT n.* FROM notes n JOIN '_sirannon_changes' c ON c.seq = n.id",
+      "SELECT * FROM notes, '_sirannon_meta'",
+      "WITH leaked AS (SELECT * FROM '_sirannon_meta') SELECT * FROM leaked",
+      "INSERT INTO '_sirannon_meta' (key, value) VALUES ('a', 'b')",
+      "UPDATE '_sirannon_changes' SET seq = 0",
+      "DELETE FROM '_sirannon_changes'",
+      "DROP TABLE '_sirannon_changes'",
+      "PRAGMA table_info('_sirannon_changes')",
     ]
     const changesBefore = countSqlite(path, '_sirannon_changes')
     const schemaBefore = schemaRows()
@@ -113,9 +128,9 @@ describe("statements that reach Sirannon's own tables, the SQLite catalogue, or 
 
     let sent = 0
     for (const sql of refused) {
-      for (const route of ['query', 'execute', 'transaction', 'batch', 'load']) {
-        const answer = await postJson(served.base, `/db/notes/${route}`, bodyFor(route, sql))
-        const reply = await ws.request({ id: `refused-${sent++}`, type: route, ...bodyFor(route, sql) })
+      for (const route of ['query', 'columns', 'execute', 'transaction', 'batch', 'load']) {
+        const answer = await postJson(served.base, `/db/notes/${routePath(route)}`, bodyFor(route, sql))
+        const reply = await ws.request({ id: `refused-${sent++}`, type: routePath(route), ...bodyFor(route, sql) })
 
         expect([answer.status, errorCodeOf(answer.body)], `${route} ${sql}`).toEqual([403, 'FORBIDDEN_SQL'])
         expect([reply.type, reply.error?.code], `${route} ${sql}`).toEqual(['error', 'FORBIDDEN_SQL'])
@@ -152,9 +167,13 @@ describe("statements that reach Sirannon's own tables, the SQLite catalogue, or 
 
     let sent = 0
     for (const sql of refused) {
-      for (const route of ['query', 'execute', 'transaction', 'batch', 'load']) {
-        const answer = await postJson(served.base, `/db/notes/${route}`, bodyFor(route, sql))
-        const reply = await ws.request({ id: `connection-state-${sent++}`, type: route, ...bodyFor(route, sql) })
+      for (const route of ['query', 'columns', 'execute', 'transaction', 'batch', 'load']) {
+        const answer = await postJson(served.base, `/db/notes/${routePath(route)}`, bodyFor(route, sql))
+        const reply = await ws.request({
+          id: `connection-state-${sent++}`,
+          type: routePath(route),
+          ...bodyFor(route, sql),
+        })
 
         expect([answer.status, errorCodeOf(answer.body)], `${route} ${sql}`).toEqual([403, 'FORBIDDEN_SQL'])
         expect([reply.type, reply.error?.code], `${route} ${sql}`).toEqual(['error', 'FORBIDDEN_SQL'])

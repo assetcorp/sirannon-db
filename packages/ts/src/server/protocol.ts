@@ -1,5 +1,6 @@
 import { isBulkLoadDurability } from '../core/bulk-load.js'
 import { decodeTaggedValues } from '../core/cdc/encoding.js'
+import type { ColumnDetail, ReadTruncation } from '../core/driver/column-reads.js'
 import type {
   BulkLoadDurability,
   BulkLoadOptions,
@@ -46,6 +47,15 @@ export interface QueryRequest {
   params?: Record<string, unknown> | unknown[]
   /** The read concern that this read requires. */
   readConcern?: ReadConcern
+  /**
+   * `columns` to receive a {@link QueryColumnsResponse}, which holds each column's details and each row as an array of
+   * values in column order. Without it the server answers with a {@link QueryResponse}.
+   */
+  shape?: 'columns'
+  /** The most rows that a `columns` answer holds, as a non-negative safe integer; the server reads one more row to learn whether more exist. */
+  maxRows?: number
+  /** The most bytes of values that a `columns` answer holds, as a non-negative safe integer, where every value counts 8 bytes and a TEXT or BLOB value also counts its length in bytes. */
+  maxBytes?: number
 }
 
 /**
@@ -106,6 +116,20 @@ export interface BatchRequest {
 export interface QueryResponse {
   /** The rows that the statement returned, with blobs and large integers in their tagged wire form. */
   rows: Record<string, unknown>[]
+}
+
+/**
+ * The body that `POST /db/{id}/query` returns for a request with `shape` set to `columns`.
+ *
+ * @public
+ */
+export interface QueryColumnsResponse {
+  /** One entry for each result column, in order, with `null` for a detail that SQLite or the driver does not report. */
+  columns: ColumnDetail[]
+  /** One array for each row, holding the row's values in column order, with blobs and large integers in their tagged wire form. */
+  rows: unknown[][]
+  /** `rows` or `bytes` when that limit stopped the read before its last row, and `null` when the answer holds every row. */
+  truncated: ReadTruncation | null
 }
 
 /**

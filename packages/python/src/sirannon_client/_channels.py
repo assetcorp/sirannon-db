@@ -5,6 +5,7 @@ from typing import Any, Protocol, TypeAlias
 
 from pydantic import BaseModel
 
+from sirannon_client._columns import columns_body
 from sirannon_client._errors import ErrorCodes, SirannonError, invalid_argument, invalid_response
 from sirannon_client._exchange import Exchange, path_segment
 from sirannon_client._http import AsyncHttp, parse_answer
@@ -55,6 +56,10 @@ class Channel(Protocol):
 
     async def query(self, sql: str, params: Params | None, read_concern: dict[str, Any] | None) -> Any: ...
 
+    async def query_columns(
+        self, sql: str, params: Params | None, read_concern: dict[str, Any] | None, limits: dict[str, int]
+    ) -> Any: ...
+
     async def execute(self, sql: str, params: Params | None) -> dict[str, Any]: ...
 
     async def transaction(self, statements: list[dict[str, Any]]) -> dict[str, Any]: ...
@@ -95,6 +100,11 @@ class HttpChannel:
     async def query(self, sql: str, params: Params | None, read_concern: dict[str, Any] | None) -> Any:
         body = _without_none({"sql": sql, "params": bind_values(params), "readConcern": read_concern})
         return _rows(await self._post("/query", body))
+
+    async def query_columns(
+        self, sql: str, params: Params | None, read_concern: dict[str, Any] | None, limits: dict[str, int]
+    ) -> Any:
+        return await self._post("/query", columns_body(sql, bind_values(params), read_concern, limits))
 
     async def execute(self, sql: str, params: Params | None) -> dict[str, Any]:
         return _object(await self._post("/execute", _without_none({"sql": sql, "params": bind_values(params)})))
@@ -138,6 +148,11 @@ class WebSocketChannel:
 
     async def query(self, sql: str, params: Params | None, read_concern: dict[str, Any] | None) -> Any:
         return _rows(await self._ask("query", {"sql": sql, "params": bind_values(params), "readConcern": read_concern}))
+
+    async def query_columns(
+        self, sql: str, params: Params | None, read_concern: dict[str, Any] | None, limits: dict[str, int]
+    ) -> Any:
+        return await self._ask("query", columns_body(sql, bind_values(params), read_concern, limits))
 
     async def execute(self, sql: str, params: Params | None) -> dict[str, Any]:
         return _object(await self._ask("execute", {"sql": sql, "params": bind_values(params)}))

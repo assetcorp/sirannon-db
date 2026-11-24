@@ -27,6 +27,21 @@ rows, err := db.Query(ctx, "SELECT id, total FROM orders WHERE id = ?", []any{in
 
 The client returns every integer in a row as an `int64` and every BLOB as a `[]byte`, including an integer beyond 2^53, so you read back each value exactly as SQLite stores it. It sends both types the same way. `Options.Transport` takes `sirannon.TransportWebSocket`, which is the default, or `sirannon.TransportHTTP`.
 
+`QueryWithColumns` returns a `QueryColumnsResponse` that holds each result column's details and each row as a `[]any` in column order, so a join that selects `a.id` and `b.id` keeps both values. Set the fields of `ColumnLimits` to cap a read whose statement someone else wrote:
+
+```go
+answer, err := db.QueryWithColumns(ctx, "SELECT a.id, b.id, a.label FROM items a JOIN items b ON a.parent = b.id", nil,
+	sirannon.ColumnLimits{MaxRows: sirannon.Ptr(int64(500)), MaxBytes: sirannon.Ptr(int64(1 << 20))})
+if err != nil {
+	return err
+}
+if answer.Truncated != nil {
+	log.Printf("the read stopped at its %s limit", *answer.Truncated)
+}
+```
+
+Each `ColumnDetail` has `Name`, `DeclaredType`, `Table`, `Column`, and `Database`, with `nil` for a detail that the server's driver doesn't report. A nil field of `ColumnLimits` sets no limit, and the client refuses a limit outside 0 to 2^53-1 with `INVALID_ARGUMENT` before it sends anything.
+
 ## Registered operations
 
 A server refuses statements unless it sets `acceptSql: true`, so a program that talks to such a server calls the [registered operations](operations.md) that the server defines. `sirannon-codegen` writes a typed reference for each of them:

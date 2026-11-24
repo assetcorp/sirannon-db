@@ -1,6 +1,6 @@
 import type { PruneBoundarySource } from './cdc/prune-boundaries.js'
+import { DatabaseColumnQueries } from './database-column-queries.js'
 import { createDatabaseRuntime, type DatabaseInternals } from './database-create.js'
-import { DatabaseEncryption } from './database-encryption.js'
 import type { DatabaseObserver } from './database-observability.js'
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DeviceSyncPort } from './database-sync.js'
@@ -33,7 +33,7 @@ export type { DatabaseInternals } from './database-create.js'
  *
  * @public
  */
-export class Database extends DatabaseEncryption {
+export class Database extends DatabaseColumnQueries {
   /** @internal */
   static async create(
     id: string,

@@ -545,6 +545,24 @@ type ClusterStatusResponseCurrentPrimaryObject struct {
 	Endpoint *string `json:"endpoint,omitempty"`
 }
 
+// ColumnDetail: Describes one column of a result, in the order that the statement returns its columns.
+type ColumnDetail struct {
+	// The column's name in the result, which `AS` sets and which can repeat across columns.
+	Name string `json:"name"`
+	// The type that the table's schema declares for the source column, or `null` for an expression or when
+	// the driver cannot report it.
+	DeclaredType *string `json:"declaredType"`
+	// The table that the value comes from, or `null` for an expression or when the driver cannot report
+	// it.
+	Table *string `json:"table"`
+	// The column of that table that the value comes from, or `null` for an expression or when the driver
+	// cannot report it.
+	Column *string `json:"column"`
+	// The schema that holds that table, such as `main`, or `null` for an expression or when the driver
+	// cannot report it.
+	Database *string `json:"database"`
+}
+
 // DatabaseStatus: Whether one open database can serve requests.
 type DatabaseStatus struct {
 	// The identifier under which the registry holds the database.
@@ -759,6 +777,20 @@ type OperationQueryRequest struct {
 	ReadConcern *ReadConcern `json:"readConcern,omitempty"`
 }
 
+// QueryColumnsResponse: The body that `POST /db/{id}/query` returns for a request with `shape` set to
+// `columns`.
+type QueryColumnsResponse struct {
+	// One entry for each result column, in order, with `null` for a detail that SQLite or the driver does
+	// not report.
+	Columns []ColumnDetail `json:"columns"`
+	// One array for each row, holding the row's values in column order, with blobs and large integers in
+	// their tagged wire form.
+	Rows [][]any `json:"rows"`
+	// `rows` or `bytes` when that limit stopped the read before its last row, and `null` when the answer
+	// holds every row. One of `rows`, `bytes`.
+	Truncated *string `json:"truncated"`
+}
+
 // QueryRequest: Body of `POST /db/{id}/query`.
 type QueryRequest struct {
 	// The statement to execute.
@@ -767,6 +799,15 @@ type QueryRequest struct {
 	Params *QueryRequestParams `json:"params,omitempty"`
 	// The read concern that this read requires.
 	ReadConcern *ReadConcern `json:"readConcern,omitempty"`
+	// `columns` to receive a QueryColumnsResponse, which holds each column's details and each row as an
+	// array of values in column order. Without it the server answers with a QueryResponse.
+	Shape *string `json:"shape,omitempty"`
+	// The most rows that a `columns` answer holds, as a non-negative safe integer; the server reads one
+	// more row to learn whether more exist.
+	MaxRows *float64 `json:"maxRows,omitempty"`
+	// The most bytes of values that a `columns` answer holds, as a non-negative safe integer, where every
+	// value counts 8 bytes and a TEXT or BLOB value also counts its length in bytes.
+	MaxBytes *float64 `json:"maxBytes,omitempty"`
 }
 
 // QueryResponse: The body that a read route returns.
@@ -1196,6 +1237,13 @@ type WSQueryMessage struct {
 	Args map[string]any `json:"args,omitzero"`
 	// The read concern that this read requires.
 	ReadConcern *ReadConcern `json:"readConcern,omitempty"`
+	// `columns` to receive each column's details and each row as an array of values in column order; it
+	// applies to `sql` alone.
+	Shape *string `json:"shape,omitempty"`
+	// The most rows that a `columns` result holds, as a non-negative safe integer.
+	MaxRows *float64 `json:"maxRows,omitempty"`
+	// The most bytes of values that a `columns` result holds, as a non-negative safe integer.
+	MaxBytes *float64 `json:"maxBytes,omitempty"`
 }
 
 // WSResultMessage: The server's reply to a read, write, transaction, batch, load, or acknowledgement.
@@ -1694,18 +1742,19 @@ func (u *WSQueryMessageParams) UnmarshalJSON(data []byte) error {
 // WSResultMessageData holds one of several forms.
 // Set exactly one field. A value with no field set, or with two, fails to encode.
 type WSResultMessageData struct {
-	QueryResponse       *QueryResponse
-	ExecuteResponse     *ExecuteResponse
-	TransactionResponse *TransactionResponse
-	BatchResponse       *BatchResponse
-	BulkLoadResult      *BulkLoadResult
-	AckResponse         *AckResponse
+	QueryResponse        *QueryResponse
+	QueryColumnsResponse *QueryColumnsResponse
+	ExecuteResponse      *ExecuteResponse
+	TransactionResponse  *TransactionResponse
+	BatchResponse        *BatchResponse
+	BulkLoadResult       *BulkLoadResult
+	AckResponse          *AckResponse
 }
 
 // MarshalJSON writes the one field that is set in the tagged value encoding, and fails when none or
 // several are set.
 func (u WSResultMessageData) MarshalJSON() ([]byte, error) {
-	return marshalUnion("WSResultMessageData", u.QueryResponse, u.ExecuteResponse, u.TransactionResponse, u.BatchResponse, u.BulkLoadResult, u.AckResponse)
+	return marshalUnion("WSResultMessageData", u.QueryResponse, u.QueryColumnsResponse, u.ExecuteResponse, u.TransactionResponse, u.BatchResponse, u.BulkLoadResult, u.AckResponse)
 }
 
 // UnmarshalJSON sets the field whose form matches the JSON, decoding the tagged value encoding, and
@@ -1718,14 +1767,16 @@ func (u *WSResultMessageData) UnmarshalJSON(data []byte) error {
 		case 0:
 			return decodeWire(data, &u.QueryResponse)
 		case 1:
-			return decodeWire(data, &u.ExecuteResponse)
+			return decodeWire(data, &u.QueryColumnsResponse)
 		case 2:
-			return decodeWire(data, &u.TransactionResponse)
+			return decodeWire(data, &u.ExecuteResponse)
 		case 3:
-			return decodeWire(data, &u.BatchResponse)
+			return decodeWire(data, &u.TransactionResponse)
 		case 4:
-			return decodeWire(data, &u.BulkLoadResult)
+			return decodeWire(data, &u.BatchResponse)
 		case 5:
+			return decodeWire(data, &u.BulkLoadResult)
+		case 6:
 			return decodeWire(data, &u.AckResponse)
 		}
 	case "null":
@@ -1736,6 +1787,7 @@ func (u *WSResultMessageData) UnmarshalJSON(data []byte) error {
 
 var wsResultMessageDataShapes = []variantShape{
 	{required: []string{"rows"}, known: []string{"rows"}, consts: []string{}},
+	{required: []string{"columns", "rows", "truncated"}, known: []string{"columns", "rows", "truncated"}, consts: []string{}},
 	{required: []string{"changes", "lastInsertRowId"}, known: []string{"changes", "lastInsertRowId"}, consts: []string{}},
 	{required: []string{"results"}, known: []string{"results"}, consts: []string{}},
 	{required: []string{"results"}, known: []string{"results"}, consts: []string{}},

@@ -30,6 +30,21 @@ await db.execute('INSERT INTO users (name) VALUES (?)', ['Turing'])
 
 The client reads `GET /capabilities` once per server and caches the answer. When that answer omits `query.sql`, a statement fails with `SQL_NOT_ACCEPTED` before it leaves the process, so the client never sends a statement that the server would refuse.
 
+## Column details and capped reads
+
+`queryWithColumns` returns each result column's details with each row as an array in column order, so a join that selects `a.id` and `b.id` keeps both values. Set `maxRows` or `maxBytes` when the statement comes from someone else, such as a person typing SQL into a console, so that one read can't return more than you're prepared to hold:
+
+```ts
+const { columns, rows, truncated } = await db.queryWithColumns(
+  'SELECT a.id, b.id, a.label FROM items a JOIN items b ON a.parent = b.id',
+  [],
+  { maxRows: 500, maxBytes: 1_048_576 },
+)
+if (truncated !== null) console.warn(`The read stopped at its ${truncated === 'rows' ? 'row' : 'byte'} limit`)
+```
+
+Each entry of `columns` holds `name`, `declaredType`, `table`, `column`, and `database`, with `null` for a detail that the server's driver doesn't report. The client refuses a limit that isn't a whole number from 0 to 2^53-1 with `INVALID_ARGUMENT` before it sends anything. Through a `TopologyAwareClient`, the read goes where its `readConcern` and `readPreference` send every other read.
+
 ## Transactions and bulk writes
 
 Both transports support every write shape. The client sends a whole transaction in one request, and the server commits or rolls it back as a unit, so no network round trip falls between two of its statements:

@@ -100,6 +100,7 @@ export function buildOpenApiDocument(
     paths[path][route.method] = operationOf(route)
     if (route.request !== null) used.add(typeof route.request === 'string' ? route.request : route.request.optional)
     for (const body of Object.values(route.responses)) used.add(body)
+    for (const body of route.bodiesThatARequestFieldSelects ?? []) used.add(body)
   }
   for (const name of wire.names) {
     if (!used.has(name) && name !== 'ErrorResponse' && !name.endsWith('Envelope') && name !== 'BulkLoadDurability') {

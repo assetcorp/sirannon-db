@@ -8,6 +8,7 @@ import type { SQLiteConnection, SQLiteDriver, SQLiteStatement } from '../../core
 import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
 import { refuseEncryptedOpen } from '../../core/encryption/errors.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { readWithColumns } from './column-reads.js'
 
 /**
  * Settings for the driver built on Bun's built-in SQLite.
@@ -41,6 +42,7 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
       steppedCopy: false,
       rowCounts: false,
       encryption: false,
+      columnDetails: true,
     },
     resolveExtensionPath: extensionPath => resolve(extensionPath),
     createWriterContext: asyncLocalWriterContext,
@@ -76,6 +78,9 @@ export function bunSqlite(driverOptions?: BunSqliteOptions): SQLiteDriver {
             },
             async get<T = unknown>(...params: unknown[]): Promise<T | undefined> {
               return narrowRowIntegers((stmt.get(...bindableParams(params)) as T | null) ?? undefined)
+            },
+            async allWithColumns(limits, ...params) {
+              return readWithColumns(stmt, limits, params)
             },
             async run(...params: unknown[]) {
               stmt.run(...bindableParams(params))

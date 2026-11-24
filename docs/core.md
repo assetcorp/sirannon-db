@@ -36,6 +36,31 @@ On a database opened with the `backups` option, `checkpoint()` takes a turn of t
 
 `query` and `execute` refuse `PRAGMA wal_checkpoint` with `FORBIDDEN_SQL`. A checkpoint on a reader connection can return a backup copy to its first page, and on a database with backups, a checkpoint outside the cycle can discard log frames that no backup holds yet.
 
+## Column details and capped reads
+
+`queryWithColumns` returns each result column's details with each row as an array in column order, so a join that selects `a.id` and `b.id`, or a column named `"1"`, keeps its place. It reads on the same connections as `query`, with the same hooks, metrics, row counts, read concern, and integer handling, and it refuses the same statements:
+
+```ts
+const { columns, rows, truncated } = await db.queryWithColumns(
+  'SELECT o.id, c.id, o.total FROM orders o JOIN customers c ON c.id = o.customer_id',
+  [],
+  { maxRows: 1000, maxBytes: 4 * 1024 * 1024 },
+)
+```
+
+Each entry of `columns` holds `name`, `declaredType`, `table`, `column`, and `database`. Sirannon sets a detail to `null` for an expression such as `count(*)`, and for any detail that the driver can't report:
+
+| Driver | Details it reports |
+| --- | --- |
+| better-sqlite3 | All five |
+| node:sqlite | All five, on Node.js 24 or later. On Node.js 22 the driver's `columnDetails` capability is `false`, so the call fails with `COLUMN_DETAILS_UNSUPPORTED` |
+| Bun | `name` and `declaredType` |
+| wa-sqlite and Expo | `name` |
+
+`maxRows` and `maxBytes` take a whole number from 0 to 2^53-1, and Sirannon refuses any other value with `INVALID_READ_LIMIT` before SQLite reads a row. Sirannon reads one row at a time and stops at the first limit that the read reaches, so a recursive query that never ends stops too. `truncated` is then `rows` or `bytes`, and it's `null` when the answer holds every row. Sirannon reads one row past `maxRows` to learn whether more exist. Every value counts 8 bytes toward `maxBytes`, a TEXT value also counts the bytes of its UTF-8 encoding, and a BLOB also counts its length. Sirannon leaves out the first row that would take the total past `maxBytes`, so the answer never holds more bytes than the limit. With `maxRows: 0`, the answer holds the columns and no rows.
+
+A read without limits takes every row in one call, as `query` does. A read with a limit steps through the rows one at a time so that it holds only the rows it returns, and on better-sqlite3 and Bun each step costs more time than a row of the single call does. On Bun, a read with a limit fails with `COLUMN_DETAILS_UNSUPPORTED` when two of its columns share a name, because Bun steps through rows only as objects keyed by column name. Give each column a distinct name with `AS`, or read without the limits.
+
 ## Live queries
 
 `db.live` returns a query result that Sirannon updates from change events, so a view re-renders without polling or re-reading the table:

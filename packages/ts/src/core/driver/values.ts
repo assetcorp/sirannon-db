@@ -19,6 +19,23 @@ export function narrowRowIntegers<T>(row: T): T {
   return row
 }
 
+/**
+ * Returns a row of values with each `bigint` inside the safe integer range replaced by a `number`.
+ *
+ * @param row - The row's values, which this function changes in place.
+ * @returns The same row.
+ * @internal
+ */
+export function narrowArrayIntegers(row: unknown[]): unknown[] {
+  for (let index = 0; index < row.length; index++) {
+    const value = row[index]
+    if (typeof value === 'bigint' && value >= -SAFE_INT_BOUND && value <= SAFE_INT_BOUND) {
+      row[index] = Number(value)
+    }
+  }
+  return row
+}
+
 export function narrowRowsIntegers<T>(rows: T[]): T[] {
   for (const row of rows) {
     narrowRowIntegers(row)

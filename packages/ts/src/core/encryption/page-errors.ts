@@ -29,7 +29,7 @@ async function guarded<T>(call: () => Promise<T>): Promise<T> {
 }
 
 function guardedStatement(statement: SQLiteStatement): SQLiteStatement {
-  const { allRaw, allCounted, getCounted, allRawCounted } = statement
+  const { allRaw, allCounted, getCounted, allRawCounted, allWithColumns } = statement
   const result: SQLiteStatement = {
     all: <T>(...params: unknown[]) => guarded(() => statement.all<T>(...params)),
     get: <T>(...params: unknown[]) => guarded(() => statement.get<T>(...params)),
@@ -49,6 +49,9 @@ function guardedStatement(statement: SQLiteStatement): SQLiteStatement {
   if (allRawCounted) {
     result.allRawCounted = <T>(...params: unknown[]) =>
       guarded(() => allRawCounted.call<SQLiteStatement, unknown[], Promise<Counted<T[]>>>(statement, ...params))
+  }
+  if (allWithColumns) {
+    result.allWithColumns = (limits, ...params) => guarded(() => allWithColumns.call(statement, limits, ...params))
   }
   return result
 }

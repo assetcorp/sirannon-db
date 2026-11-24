@@ -1,4 +1,5 @@
 import type { QueryOptions, ReadConcern, ServerExecutionTarget } from '../core/types.js'
+import { columnReadOptions, queryWireColumns, requestedReadShape } from './column-shape.js'
 import type { WSResultMessage } from './protocol.js'
 import {
   decodeBoundParams,
@@ -69,7 +70,18 @@ export async function handleQueryMessage(
     return
   }
 
+  const shape = requestedReadShape(msg)
+  if (!shape.ok) {
+    ctx.sendError(id, 'INVALID_MESSAGE', shape.message)
+    return
+  }
+
   try {
+    if (shape.columns) {
+      const options = columnReadOptions(shape, readConcern.value)
+      ctx.sendResult(id, await queryWireColumns(ctx.target, msg.sql, params.value, options))
+      return
+    }
     const rows = await queryWireRows(ctx.target, msg.sql, params.value, toReadOptions(readConcern.value))
     ctx.sendResult(id, { rows: rows as Record<string, unknown>[] })
   } catch (err) {

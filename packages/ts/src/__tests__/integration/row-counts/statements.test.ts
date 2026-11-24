@@ -149,6 +149,23 @@ describe.skipIf(binding === null)('rows read and rows written in onQueryComplete
       for (const read of reads) expect(read.rowsRead).toBe((read.rowsReturned ?? 0) + 1)
     })
 
+    it('bills a columns read for the rows that SQLite read, which stop one row past maxRows', async () => {
+      const db = await openOrders(topology)
+      const everyRow = await db.queryWithColumns(SCAN_BY_CUSTOMER, [LAST_CUSTOMER])
+      const limited = await db.queryWithColumns(ORDERS_UP_TO, [SEEDED_ORDERS], { maxRows: 5 })
+
+      expect(everyRow.rows).toHaveLength(1)
+      expect(limited).toMatchObject({ truncated: 'rows' })
+      expect(limited.rows).toHaveLength(5)
+      expect(onlyReportFor(SCAN_BY_CUSTOMER)).toMatchObject({
+        rowsReturned: 1,
+        rowsRead: SEEDED_ORDERS,
+        rowsWritten: 0,
+        error: false,
+      })
+      expect(onlyReportFor(ORDERS_UP_TO)).toMatchObject({ rowsReturned: 5, rowsRead: 6, rowsWritten: 0, error: false })
+    })
+
     it('reports only the attempt that took effect when a failed write forces a grouped commit to execute again', async () => {
       const db = await openOrders(topology)
       const writes = Array.from({ length: CONCURRENT_WRITES }, (_, index) =>

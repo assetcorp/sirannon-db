@@ -25,6 +25,21 @@ async with AsyncSirannonClient("http://localhost:9876") as client:
 
 Every method of `SirannonClient` blocks until the server answers, while the method of the same name on `AsyncSirannonClient` is a coroutine. The client returns every integer as a Python `int`, including an integer beyond 2^53, and every BLOB as `bytes`, so you read back each value exactly as SQLite stores it. It sends both types the same way.
 
+`query_with_columns` returns a `QueryColumnsResponse` that holds each result column's details and each row as a list in column order, so a join that selects `a.id` and `b.id` keeps both values. Pass `max_rows` or `max_bytes` to cap a read whose statement someone else wrote:
+
+```python
+answer = db.query_with_columns(
+    "SELECT a.id, b.id, a.label FROM items a JOIN items b ON a.parent = b.id",
+    max_rows=500,
+    max_bytes=1_048_576,
+)
+names = [column.name for column in answer.columns]
+if answer.truncated is not None:
+    print(f"The read stopped at its {answer.truncated} limit")
+```
+
+Each column has `name`, `declared_type`, `table`, `column`, and `database`, with `None` for a detail that the server's driver doesn't report. The client refuses a limit that isn't an `int` from 0 to 2^53-1 with `INVALID_ARGUMENT` before it sends anything.
+
 ## Registered operations
 
 A server refuses statements unless it sets `acceptSql: true`, so a program that talks to such a server calls the [registered operations](operations.md) that the server defines. `sirannon-codegen` writes a typed reference for each of them:

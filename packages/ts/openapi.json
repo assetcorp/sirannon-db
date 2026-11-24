@@ -140,7 +140,7 @@
     "/db/{id}/query": {
       "post": {
         "operationId": "query",
-        "summary": "Runs one read statement and returns its rows, on a server that accepts SQL.",
+        "summary": "Runs one read statement and returns its rows, on a server that accepts SQL. With shape set to columns, it returns a QueryColumnsResponse that holds each column and each row as an array, stopping at maxRows and maxBytes.",
         "tags": [
           "Statements"
         ],
@@ -2126,6 +2126,67 @@
         ],
         "description": "The body of `GET /db/{id}/cluster`, with the nodes to which a client sends the database's writes and reads."
       },
+      "ColumnDetail": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The column's name in the result, which `AS` sets and which can repeat across columns."
+          },
+          "declaredType": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The type that the table's schema declares for the source column, or `null` for an expression or when the driver cannot report it."
+          },
+          "table": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The table that the value comes from, or `null` for an expression or when the driver cannot report it."
+          },
+          "column": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The column of that table that the value comes from, or `null` for an expression or when the driver cannot report it."
+          },
+          "database": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "The schema that holds that table, such as `main`, or `null` for an expression or when the driver cannot report it."
+          }
+        },
+        "required": [
+          "name",
+          "declaredType",
+          "table",
+          "column",
+          "database"
+        ],
+        "description": "Describes one column of a result, in the order that the statement returns its columns."
+      },
       "DatabaseStatus": {
         "type": "object",
         "properties": {
@@ -2569,6 +2630,47 @@
         },
         "description": "The body of `POST /db/{id}/query/{name}`, the route that executes a registered read."
       },
+      "QueryColumnsResponse": {
+        "type": "object",
+        "properties": {
+          "columns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ColumnDetail"
+            },
+            "description": "One entry for each result column, in order, with `null` for a detail that SQLite or the driver does not report."
+          },
+          "rows": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {}
+            },
+            "description": "One array for each row, holding the row's values in column order, with blobs and large integers in their tagged wire form."
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "rows",
+                  "bytes"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`rows` or `bytes` when that limit stopped the read before its last row, and `null` when the answer holds every row."
+          }
+        },
+        "required": [
+          "columns",
+          "rows",
+          "truncated"
+        ],
+        "description": "The body that `POST /db/{id}/query` returns for a request with `shape` set to `columns`."
+      },
       "QueryRequest": {
         "type": "object",
         "properties": {
@@ -2592,6 +2694,21 @@
           "readConcern": {
             "$ref": "#/components/schemas/ReadConcern",
             "description": "The read concern that this read requires."
+          },
+          "shape": {
+            "type": "string",
+            "enum": [
+              "columns"
+            ],
+            "description": "`columns` to receive a QueryColumnsResponse, which holds each column's details and each row as an array of values in column order. Without it the server answers with a QueryResponse."
+          },
+          "maxRows": {
+            "type": "number",
+            "description": "The most rows that a `columns` answer holds, as a non-negative safe integer; the server reads one more row to learn whether more exist."
+          },
+          "maxBytes": {
+            "type": "number",
+            "description": "The most bytes of values that a `columns` answer holds, as a non-negative safe integer, where every value counts 8 bytes and a TEXT or BLOB value also counts its length in bytes."
           }
         },
         "required": [

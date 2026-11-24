@@ -86,7 +86,7 @@ Clients URL-encode `{id}` and `{name}`, and the server decodes each one before i
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/db/{id}/query` | Executes a SELECT and returns `{ rows }` |
+| `POST` | `/db/{id}/query` | Executes a SELECT and returns `{ rows }`, or `{ columns, rows, truncated }` when the body sets `shape` to `columns` |
 | `POST` | `/db/{id}/query/{name}` | Executes a registered read and returns `{ rows }` |
 | `POST` | `/db/{id}/execute` | Executes a mutation and returns `{ changes, lastInsertRowId }` |
 | `POST` | `/db/{id}/execute/{name}` | Executes a registered write and returns `{ results }` |
@@ -111,6 +111,12 @@ Clients URL-encode `{id}` and `{name}`, and the server decodes each one before i
 | `GET` | `/capabilities` | Returns the announced capabilities and the registry digest |
 | `GET` | `/health` | Answers a liveness check |
 | `GET` | `/health/ready` | Answers a readiness check with per-database status |
+
+A query body with `"shape": "columns"` receives each result column's `name`, `declaredType`, `table`, `column`, and `database`, with `null` for a detail that SQLite or the driver doesn't report, and each row as an array in column order. Two columns that share a name, such as `a.id` and `b.id` in a join, therefore each keep their value. The body can add `maxRows` and `maxBytes`, each a whole number from 0 to 2^53-1, and the server then stops the read at the first limit it reaches and sets `truncated` to `rows` or `bytes`. Every value counts 8 bytes toward `maxBytes`, and a TEXT or BLOB value also counts its length in bytes, so a blob, a long string, or a row of many columns reaches the limit as soon as its values do. The server answers `400 INVALID_REQUEST` over HTTP, and an `INVALID_MESSAGE` error over a WebSocket, for any other `shape`, for a limit outside that range, and for either limit in a body without `shape`. A body without `shape` receives `{ rows }` as before.
+
+```json
+{ "sql": "SELECT a.id, b.id, a.label FROM items a JOIN items b ON a.id = b.id", "shape": "columns", "maxRows": 500, "maxBytes": 1048576 }
+```
 
 The server serves `/db/{id}/checkpoint` whatever `acceptSql` is set to, so keep it for operators in your `authenticate` hook, as the backup routes below show. On a database with `backups`, the answer waits for a turn of the backup cycle. Read the [device sync guide](device-sync.md) for the four device routes. A read body can include `readConcern` and a write body can include `writeConcern`, and the [replication guide](replication.md#read-concern) defines both.
 
@@ -195,6 +201,7 @@ Connect to `ws://host:port/db/{id}`. Every message has a `type` and an `id` that
 | Inbound `type` | Fields | Reply |
 | --- | --- | --- |
 | `query` | `sql`, `params?`, `readConcern?` | `{ type: 'result', data: { rows } }` |
+| `query` | `sql`, `params?`, `readConcern?`, `shape: 'columns'`, `maxRows?`, `maxBytes?` | `{ type: 'result', data: { columns, rows, truncated } }` |
 | `query` | `name`, `args?`, `readConcern?` | `{ type: 'result', data: { rows } }` |
 | `execute` | `sql`, `params?` | `{ type: 'result', data: { changes, lastInsertRowId } }` |
 | `execute` | `name`, `args?`, `writeConcern?` | `{ type: 'result', data: { results } }` |

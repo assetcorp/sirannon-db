@@ -3,9 +3,10 @@ import type { DatabaseObserver } from './database-observability.js'
 import type { Metered } from './driver/row-counts.js'
 import type { SQLiteConnection } from './driver/types.js'
 import type { QueryOutcomeMeasure } from './metrics/collector.js'
-import { readOneOutcome, readOutcome } from './metrics/outcomes.js'
+import { columnReadOutcome, readOneOutcome, readOutcome } from './metrics/outcomes.js'
+import { queryWithColumnsMetered, readLimitsFrom } from './query-columns.js'
 import { query, queryForWire, queryMetered, queryOne, queryOneMetered, queryRowsForWire } from './query-executor.js'
-import type { Params, QueryOptions } from './types.js'
+import type { Params, QueryOptions, QueryWithColumnsOptions, QueryWithColumnsResult } from './types.js'
 import type { WriterLock } from './writer-lock.js'
 
 export interface DatabaseReadDeps {
@@ -84,6 +85,41 @@ export function readOneRow<T>(
       sql,
       (conn, leasedFrom) => queryOneMetered<T>(conn, sql, params, leasedFrom),
       readOneOutcome,
+    ),
+  )
+}
+
+/**
+ * Returns the details of each column of a read with every row as an array, stopping at the caller's `maxRows` and
+ * `maxBytes`, running it on a reader connection with no hook or metric work when nothing observes queries, and
+ * otherwise through the query hooks and the metrics.
+ *
+ * @param deps - The connection pool, writer lock, and observer of the database.
+ * @param sql - The statement to execute.
+ * @param params - The values to bind to the statement, named or positional.
+ * @param options - The read concern that the query hooks receive, and the two limits.
+ * @param rawIntegers - `true` when the caller encodes the rows for the wire, so the driver can leave integers raw.
+ * @returns The columns, the rows, and the limit that stopped the read.
+ * @throws A `SirannonError` with `INVALID_READ_LIMIT` before any work when a limit is not a non-negative safe integer.
+ * @internal
+ */
+export function readColumnRows(
+  deps: DatabaseReadDeps,
+  sql: string,
+  params: Params | undefined,
+  options: QueryWithColumnsOptions | undefined,
+  rawIntegers: boolean,
+): Promise<QueryWithColumnsResult> {
+  const limits = readLimitsFrom(options, rawIntegers)
+  if (readsUnobserved(deps)) {
+    return queryWithColumnsMetered(deps.pool.leaseReader(), sql, params, limits, deps.pool).then(read => read.value)
+  }
+  return deps.observer.withQueryHooks(sql, params, options, () =>
+    onReadConnection(
+      deps,
+      sql,
+      (conn, leasedFrom) => queryWithColumnsMetered(conn, sql, params, limits, leasedFrom),
+      columnReadOutcome,
     ),
   )
 }

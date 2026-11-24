@@ -118,6 +118,9 @@ describe('a statement that a live query cannot keep current', () => {
       'SELECT * FROM _sirannon_changes',
       'SELECT * FROM "_SIRANNON_changes"',
       'SELECT id FROM items WHERE id IN (SELECT seq FROM _sirannon_changes)',
+      "SELECT * FROM '_sirannon_changes'",
+      "SELECT id FROM items WHERE id IN (SELECT seq FROM main.'_sirannon_changes')",
+      "SELECT items.id FROM items, '_sirannon_meta'",
       'SELECT name FROM sqlite_master',
       'SELECT name FROM sqlite_schema ORDER BY name',
     ]) {

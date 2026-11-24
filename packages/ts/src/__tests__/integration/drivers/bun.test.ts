@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const FIXTURE = fileURLToPath(new URL('./bun-fresh-open.mjs', import.meta.url))
 const VALUES_FIXTURE = fileURLToPath(new URL('./bun-values.mjs', import.meta.url))
+const COLUMNS_FIXTURE = fileURLToPath(new URL('./bun-columns.mjs', import.meta.url))
 const bunInstalled = spawnSync('bun', ['--version']).status === 0
 
 let dir: string
@@ -68,5 +69,55 @@ describe.skipIf(!bunInstalled)('the Bun driver', () => {
         { id: 5, value: `${2n ** 63n - 1n}n` },
       ],
     })
+  }, 90_000)
+
+  it('returns columns with their declared types and rows in column order, and refuses a limited read whose names repeat', () => {
+    const output = JSON.parse(execFileSync('bun', [COLUMNS_FIXTURE, dir], { encoding: 'utf8', timeout: 60_000 }))
+
+    const raw = new BetterSqlite3(join(dir, 'columns.db'), { readonly: true, fileMustExist: true })
+    let stored: unknown[][]
+    try {
+      raw.defaultSafeIntegers(true)
+      stored = raw
+        .prepare('SELECT id, label, amount, payload FROM items ORDER BY id')
+        .raw(true)
+        .all()
+        .map(row =>
+          (row as unknown[]).map(value => {
+            if (typeof value === 'bigint') return Number.isSafeInteger(Number(value)) ? Number(value) : `${value}n`
+            if (value instanceof Uint8Array) return `x'${Buffer.from(value).toString('hex')}'`
+            return value
+          }),
+        )
+    } finally {
+      raw.close()
+    }
+    const detail = (name: string, declaredType: string | null) => ({
+      name,
+      declaredType,
+      table: null,
+      column: null,
+      database: null,
+    })
+
+    expect(output.repeated.columns).toEqual([
+      detail('id', 'INTEGER'),
+      detail('id', 'INTEGER'),
+      detail('label', 'TEXT'),
+      detail('amount', 'INTEGER'),
+      detail('payload', 'BLOB'),
+      detail('total', null),
+    ])
+    expect(output.repeated.rows).toEqual(
+      stored.map(([id, label, amount, payload]) => [id, id, label, amount, payload, amount]),
+    )
+    expect(output.repeatedLimited).toEqual({ refused: 'COLUMN_DETAILS_UNSUPPORTED' })
+    expect(output.unique.rows).toEqual(stored.map(row => [...row, 1, 2]))
+    expect(output.uniqueLimited).toMatchObject({
+      rows: stored.slice(0, 2).map(row => [...row, 1, 2]),
+      truncated: 'rows',
+    })
+    expect(output.bytes).toMatchObject({ rows: [[stored[0][1]]], truncated: 'bytes' })
+    expect(output.reserved).toEqual({ refused: 'FORBIDDEN_SQL' })
   }, 90_000)
 })

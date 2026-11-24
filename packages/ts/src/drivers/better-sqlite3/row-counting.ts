@@ -2,6 +2,7 @@ import type BetterSqlite3 from 'better-sqlite3'
 import { type RowCounts, withRowCounts } from '../../core/driver/row-counts.js'
 import type { BatchSummary, Counted, RunResult, SQLiteStatement } from '../../core/driver/types.js'
 import { bindableParams, narrowRowIntegers, narrowRowsIntegers, narrowSafeBigInt } from '../../core/driver/values.js'
+import { readWithColumns } from './column-reads.js'
 import type { SirannonSqliteFeature } from './sirannon-sqlite.js'
 
 type CountingStatement = BetterSqlite3.Statement & { takeRowCounts(counts: Float64Array): void }
@@ -100,6 +101,10 @@ export function countingStatement(stmt: BetterSqlite3.Statement, taker: RowCount
     },
     async getCounted<T = unknown>(...params: unknown[]): Promise<Counted<T | undefined>> {
       return taker.measure(stmt, () => narrowRowIntegers(stmt.get(...bindableParams(params)) as T | undefined))
+    },
+    async allWithColumns(limits, ...params) {
+      const measured = taker.measure(stmt, () => readWithColumns(stmt, limits, params))
+      return { ...measured.value, rowsRead: measured.rowsRead, rowsWritten: measured.rowsWritten }
     },
     async run(...params: unknown[]): Promise<RunResult> {
       const measured = taker.measure(stmt, () => stmt.run(...bindableParams(params)))

@@ -283,6 +283,8 @@ export type {
   ExecuteResult,
   Params,
   QueryOptions,
+  QueryWithColumnsOptions,
+  QueryWithColumnsResult,
   ReadConcern,
   ReadConcernLevel,
   Subscription,

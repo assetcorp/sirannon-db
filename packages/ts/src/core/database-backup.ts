@@ -87,6 +87,7 @@ export class DatabaseBackupController {
   private readonly copyWriter: SQLiteConnection
   private cycleCheckpoints = 0
   private lastCycleCheckpoint: CheckpointResult | undefined
+  private copiesInFlight = 0
 
   constructor(
     private readonly runExclusive: RunExclusive,
@@ -129,24 +130,45 @@ export class DatabaseBackupController {
     )
   }
 
+  /**
+   * Returns `true` while a copy runs, from the call that starts it until SQLite stops writing it, so that the database
+   * keeps the writer that the copy reads through open.
+   */
+  get copying(): boolean {
+    return this.copiesInFlight > 0 || this.copies.copying
+  }
+
   async backup(destPath: string): Promise<BackupFileReport> {
     const engine = this.require()
-    const copy = await startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
-      engine.backup(this.copyWriter, destPath, onFirstStep),
+    const copy = await this.countCopy(
+      startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
+        engine.backup(this.copyWriter, destPath, onFirstStep),
+      ),
     )
     return { ...copy, databaseId: this.databaseId, sourcePath: this.sourcePath }
   }
 
   backupTo(options: BackupToDestinationOptions): Promise<BackupRunReport> {
     const engine = this.require()
-    return startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
-      engine.copyToDestination(this.copyWriter, {
-        ...options,
-        databaseId: this.databaseId,
-        sourcePath: this.sourcePath,
-        onFirstStep,
-      }),
+    return this.countCopy(
+      startCopyWithoutHoldingWriter(this.copies.runAdmitted, onFirstStep =>
+        engine.copyToDestination(this.copyWriter, {
+          ...options,
+          databaseId: this.databaseId,
+          sourcePath: this.sourcePath,
+          onFirstStep,
+        }),
+      ),
     )
+  }
+
+  private async countCopy<T>(copy: Promise<T>): Promise<T> {
+    this.copiesInFlight++
+    try {
+      return await copy
+    } finally {
+      this.copiesInFlight--
+    }
   }
 
   schedule(options: BackupScheduleOptions): void {

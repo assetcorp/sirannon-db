@@ -2,13 +2,31 @@ export type PruneBoundarySource = 'device-sync' | 'device-push-cursor' | 'replic
 
 export class PruneBoundaries {
   private readonly bySource = new Map<PruneBoundarySource, bigint>()
+  private readonly listeners = new Set<() => void>()
 
   set(source: PruneBoundarySource, seq: bigint): void {
+    if (this.bySource.get(source) === seq) return
     this.bySource.set(source, seq)
+    this.notify()
   }
 
   clear(source: PruneBoundarySource): void {
-    this.bySource.delete(source)
+    if (this.bySource.delete(source)) this.notify()
+  }
+
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch {}
+    }
   }
 
   lowest(): bigint | null {

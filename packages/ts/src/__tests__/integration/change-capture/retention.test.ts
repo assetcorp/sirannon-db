@@ -70,7 +70,7 @@ describe('change-log retention', () => {
 })
 
 describe('the poll interval', () => {
-  it('sets how soon a subscriber hears of a change, and an interval of zero still delivers', async () => {
+  it('spaces reads of the change log by the interval, and an interval of zero still delivers', async () => {
     const slow = await workspace.open('slow', { cdcPollInterval: SLOW_POLL_MS })
     const instant = await workspace.open('instant', { cdcPollInterval: 0 })
     for (const db of [slow, instant]) {
@@ -82,11 +82,16 @@ describe('the poll interval', () => {
 
     await slow.execute('INSERT INTO orders VALUES (1)')
     await instant.execute('INSERT INTO orders VALUES (1)')
-    await pause(SLOW_POLL_MS / 3)
-    expect([slowSeen.events.length, instantSeen.events.length]).toEqual([0, 1])
-
     await waitForCount(slowSeen, 1)
-    expect(slowSeen.events.map(event => event.row.id)).toEqual([1])
+    await waitForCount(instantSeen, 1)
+
+    await slow.execute('INSERT INTO orders VALUES (2)')
+    await instant.execute('INSERT INTO orders VALUES (2)')
+    await pause(SLOW_POLL_MS / 3)
+    expect([slowSeen.events.length, instantSeen.events.length]).toEqual([1, 2])
+
+    await waitForCount(slowSeen, 2)
+    expect(slowSeen.events.map(event => event.row.id)).toEqual([1, 2])
   })
 })
 

@@ -1,10 +1,9 @@
-import type { PruneBoundarySource } from './cdc/prune-boundaries.js'
 import { DatabaseColumnQueries } from './database-column-queries.js'
 import { createDatabaseRuntime, type DatabaseInternals } from './database-create.js'
 import type { DatabaseObserver } from './database-observability.js'
 import { readOneRow, readRows, readWireRows } from './database-reads.js'
 import type { DeviceSyncPort } from './database-sync.js'
-import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
+import type { SQLiteDriver } from './driver/types.js'
 import type { HookDispose } from './hooks/types.js'
 import { openLiveQuery } from './live/database-live.js'
 import type { LiveQuery, LiveQueryOptions } from './live/types.js'
@@ -238,33 +237,6 @@ export class Database extends DatabaseColumnQueries {
     this.ensureOpen()
     this.ensureWriterCanWait()
     await this.runtime.cdc.unwatch(table)
-  }
-
-  /**
-   * Executes a change-log maintenance write, such as pruning, on the shared
-   * writer connection under the writer lock, so that it queues behind
-   * application writes and never contends with them for SQLite's write lock,
-   * which would block the event loop for the `busy_timeout`.
-   *
-   * @internal
-   */
-  async runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void> {
-    if (this.closed) return
-    await this.runtime.writerLock.run(() => op(this.runtime.pool.acquireWriter()))
-  }
-
-  /**
-   * Keeps the change-log entries that a component outside this database still needs, such as the changes that the replication engine's peers have yet to acknowledge, out of reach of this database's pruning.
-   *
-   * @param source - The component that holds the entries back.
-   * @param seq - The highest change-log sequence that pruning can remove for this component, or `null` to release the hold.
-   * @internal
-   */
-  holdChangeLogPruning(source: PruneBoundarySource, seq: bigint | null): void {
-    const tracker = this.runtime.cdc.changeTracker
-    if (tracker === null) return
-    if (seq === null) tracker.clearPruneBoundary(source)
-    else tracker.setPruneBoundary(source, seq)
   }
 
   /**

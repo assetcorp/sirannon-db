@@ -32,7 +32,7 @@ export function readRows<T>(
   params?: Params,
   options?: QueryOptions,
 ): Promise<T[]> {
-  if (readsUnobserved(deps)) return query<T>(deps.pool.leaseReader(), sql, params, deps.pool)
+  if (readsUnobserved(deps)) return onLeasedReader(deps.pool, conn => query<T>(conn, sql, params, deps.pool))
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(deps, sql, (conn, leasedFrom) => queryMetered<T>(conn, sql, params, leasedFrom), readOutcome),
   )
@@ -55,7 +55,9 @@ export function readWireRows(
   params?: Params,
   options?: QueryOptions,
 ): Promise<unknown[]> {
-  if (readsUnobserved(deps)) return queryRowsForWire(deps.pool.leaseReader(), sql, params, deps.pool)
+  if (readsUnobserved(deps)) {
+    return onLeasedReader(deps.pool, conn => queryRowsForWire(conn, sql, params, deps.pool))
+  }
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(deps, sql, (conn, leasedFrom) => queryForWire(conn, sql, params, leasedFrom), readOutcome),
   )
@@ -78,7 +80,7 @@ export function readOneRow<T>(
   params?: Params,
   options?: QueryOptions,
 ): Promise<T | undefined> {
-  if (readsUnobserved(deps)) return queryOne<T>(deps.pool.leaseReader(), sql, params, deps.pool)
+  if (readsUnobserved(deps)) return onLeasedReader(deps.pool, conn => queryOne<T>(conn, sql, params, deps.pool))
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(
       deps,
@@ -112,7 +114,9 @@ export function readColumnRows(
 ): Promise<QueryWithColumnsResult> {
   const limits = readLimitsFrom(options, rawIntegers)
   if (readsUnobserved(deps)) {
-    return queryWithColumnsMetered(deps.pool.leaseReader(), sql, params, limits, deps.pool).then(read => read.value)
+    return onLeasedReader(deps.pool, conn => queryWithColumnsMetered(conn, sql, params, limits, deps.pool)).then(
+      read => read.value,
+    )
   }
   return deps.observer.withQueryHooks(sql, params, options, () =>
     onReadConnection(
@@ -136,9 +140,20 @@ async function onReadConnection<T>(
 ): Promise<T> {
   const refusal = deps.pool.readerCount === 0 ? deps.writerLock.callerRefusal() : null
   if (refusal !== null) throw refusal
-  const metered =
-    deps.pool.readerCount === 0
-      ? await deps.writerLock.run(() => deps.observer.track(sql, () => op(deps.pool.acquireWriter()), measure))
-      : await deps.observer.track(sql, () => op(deps.pool.leaseReader(), deps.pool), measure)
+  if (deps.pool.readerCount === 0) {
+    const metered = await deps.writerLock.run(() =>
+      deps.observer.track(sql, () => op(deps.pool.acquireWriter()), measure),
+    )
+    return metered.value
+  }
+  const opening = deps.pool.readerReady()
+  if (opening !== null) await opening
+  const metered = await deps.observer.track(sql, () => op(deps.pool.leaseReader(), deps.pool), measure)
   return metered.value
+}
+
+function onLeasedReader<T>(pool: ConnectionPool, read: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
+  const opening = pool.readerReady()
+  if (opening === null) return read(pool.leaseReader())
+  return opening.then(() => read(pool.leaseReader()))
 }

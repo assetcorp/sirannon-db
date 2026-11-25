@@ -1,3 +1,4 @@
+import { DatabaseChangeSignal } from './cdc/change-signal.js'
 import { executeAllowingColumnDrop } from './cdc/column-drop.js'
 import { applyDdlSideEffectsIfRelevant } from './cdc/ddl-handler.js'
 import { resolveDeviceRetentionPolicy } from './cdc/device-retention.js'
@@ -10,7 +11,7 @@ import type { DatabaseReadDeps } from './database-reads.js'
 import { DatabaseSyncController } from './database-sync.js'
 import { DatabaseWriteController } from './database-writes.js'
 import { DEFAULT_SYNCHRONOUS } from './driver/synchronous.js'
-import type { SQLiteDriver } from './driver/types.js'
+import type { SQLiteConnection, SQLiteDriver } from './driver/types.js'
 import { DatabaseEncryptionController } from './encryption/controller.js'
 import { EncryptionError } from './encryption/errors.js'
 import type { EncryptionKeySource } from './encryption/key.js'
@@ -29,6 +30,14 @@ import type { DatabaseOptions } from './types.js'
 import { resolveWriterWorkerConfig } from './worker/config.js'
 import { WriteGate } from './worker/gate.js'
 import { WriterLock } from './writer-lock.js'
+
+const IN_MEMORY_PATH = ':memory:'
+const URI_PATH_PREFIX = 'file:'
+const DEFAULT_CDC_POLL_INTERVAL_MS = 50
+
+function isPlainFilePath(path: string): boolean {
+  return path !== '' && path !== IN_MEMORY_PATH && !path.startsWith(URI_PATH_PREFIX)
+}
 
 export interface DatabaseInternals {
   parentHooks?: HookRegistry
@@ -96,6 +105,16 @@ export async function createDatabaseRuntime(
   const keyring = encryptionKeyringFor(driver, options)
   const interrupted = await recoverInterruptedKeyChange(driver, path, readOnly)
   const extensions = new LoadedExtensions(driver)
+  const replicationEngines = new RegisteredReplicationEngines(id)
+  const closesIdleWriter =
+    !readOnly &&
+    options?.backups === undefined &&
+    !writerWorker.enabled &&
+    driver.capabilities.multipleConnections &&
+    isPlainFilePath(path)
+  const closeIdleWriterExclusively = (close: () => Promise<void>): void => {
+    void writerLock.detached(() => writerLock.runWithoutChangeSignal(close)).catch(() => undefined)
+  }
   let pool: ConnectionPool
   try {
     pool = await ConnectionPool.create({
@@ -103,6 +122,9 @@ export async function createDatabaseRuntime(
       path,
       readOnly: options?.readOnly,
       readPoolSize: options?.readPoolSize ?? 4,
+      connectionIdleTimeout: options?.connectionIdleTimeout,
+      ...(closesIdleWriter ? { closeIdleWriterExclusively } : {}),
+      keepsWriterOpen: () => replicationEngines.active || backups.copying,
       walMode: options?.walMode ?? true,
       synchronous: options?.synchronous,
       ...(options?.backups ? { walAutoCheckpoint: 0 } : {}),
@@ -110,6 +132,7 @@ export async function createDatabaseRuntime(
       workerHostOptions: writerWorker.host,
       keyring,
       prepareReopened: connections => extensions.reload(connections),
+      admitReader: (reader, add) => extensions.admit(reader, add),
     })
   } catch (err) {
     throw interrupted === null ? err : explainKeyAfterInterruptedChange(err, interrupted)
@@ -124,7 +147,7 @@ export async function createDatabaseRuntime(
   }
 
   const writeGate = new WriteGate(writerWorker.enabled ? writerWorker.maxPendingWrites : 0, writerWorker.retryAfterMs)
-  const writerLock = new WriterLock(driver.createWriterContext?.())
+  const writerLock = new WriterLock(driver.createWriterContext?.(), () => pool.writerReady())
   const hookRegistry = new HookRegistry()
   const observer = new DatabaseObserver(
     id,
@@ -145,15 +168,29 @@ export async function createDatabaseRuntime(
   const canOpenSnapshotConnection = driver.capabilities.multipleConnections && path !== ':memory:'
   const fileConnections = new DatabaseFileConnections(driver, path, keyring, extensions)
   const openSnapshotConnection = () => fileConnections.open({ readonly: true, walMode: false })
-  const cdc = new DatabaseCdcController(
-    op => writerLock.run(op),
-    () => pool.acquireWriter(),
-    options?.cdcPollInterval ?? 50,
-    options?.cdcRetention ?? 3_600_000,
-    canOpenSnapshotConnection ? openSnapshotConnection : null,
-    resolveDeviceRetentionPolicy(options),
-    internals?.metrics?.observeDispatch(id),
+  const watchFile = driver.watchDatabaseFile
+  const changeSignal = new DatabaseChangeSignal(
+    watchFile === undefined ? null : (onChange, onLost) => watchFile(path, onChange, onLost),
+    path !== IN_MEMORY_PATH,
+    operation => writerLock.detached(operation),
   )
+  writerLock.onRelease(changeSignal.notify)
+  const readChangeLog = <T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T> =>
+    pool.readerCount > 0 && !pool.suspended
+      ? pool.withReader(read)
+      : writerLock.runWithoutChangeSignal(() => read(pool.acquireWriter()))
+  const cdc = new DatabaseCdcController({
+    runExclusive: op => writerLock.run(op),
+    runWithoutChangeSignal: op => writerLock.runWithoutChangeSignal(op),
+    readChangeLog,
+    acquireWriter: () => pool.acquireWriter(),
+    signal: changeSignal,
+    pollInterval: options?.cdcPollInterval ?? DEFAULT_CDC_POLL_INTERVAL_MS,
+    retention: options?.cdcRetention ?? 3_600_000,
+    openSnapshotConnection: canOpenSnapshotConnection ? openSnapshotConnection : null,
+    deviceRetention: resolveDeviceRetentionPolicy(options),
+    onDispatched: internals?.metrics?.observeDispatch(id),
+  })
   const sync = new DatabaseSyncController(
     op => writeGate.run(() => writerLock.run(op)),
     () => pool.acquireWriter(),
@@ -193,7 +230,6 @@ export async function createDatabaseRuntime(
   if (options?.backups && !readOnly) backups.startCycle(options.backups)
 
   fileConnections.hold({ release: () => cdc.releaseLiveConnection(), reopen: async () => {} })
-  const replicationEngines = new RegisteredReplicationEngines(id)
   const encryption = new DatabaseEncryptionController({
     databaseId: id,
     readOnly,
@@ -225,7 +261,8 @@ export async function createDatabaseRuntime(
     writes,
     reads: { pool, writerLock, observer },
     migrations,
-    loadExtension: extensionPath => writerLock.run(() => extensions.load(pool.connections(), extensionPath)),
+    loadExtension: extensionPath =>
+      writerLock.run(() => pool.whileConnectionsOpen(() => extensions.load(() => pool.connections(), extensionPath))),
   }
 }
 

@@ -41,5 +41,6 @@ export function defineDriver(config: SQLiteDriver): SQLiteDriver {
     ...(config.createBackupEngine ? { createBackupEngine: config.createBackupEngine.bind(config) } : {}),
     ...(config.resolveExtensionPath ? { resolveExtensionPath: config.resolveExtensionPath.bind(config) } : {}),
     ...(config.files ? { files: boundFileSystem(config.files) } : {}),
+    ...(config.watchDatabaseFile ? { watchDatabaseFile: config.watchDatabaseFile.bind(config) } : {}),
   })
 }

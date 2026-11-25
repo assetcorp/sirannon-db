@@ -1,4 +1,4 @@
-import { DatabaseBackups } from './database-backups.js'
+import { DatabaseChangeFeeds } from './database-change-feeds.js'
 import type { OpenOptions, SQLiteConnection } from './driver/types.js'
 import type { EncryptionChange, EncryptionStatus } from './encryption/types.js'
 import type { FileConnectionHolder } from './file-connections.js'
@@ -11,7 +11,7 @@ import type { FileConnectionHolder } from './file-connections.js'
  *
  * @public
  */
-export class DatabaseEncryption extends DatabaseBackups {
+export class DatabaseEncryption extends DatabaseChangeFeeds {
   /**
    * Returns whether the database file holds ciphertext, the version of the encryption engine, the identifier that
    * came with the current key, the time of the last finished key change, and the progress of the current or last

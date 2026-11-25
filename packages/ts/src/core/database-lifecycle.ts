@@ -90,7 +90,8 @@ export class DatabaseLifecycle {
   }
 
   /**
-   * The number of read connections in the pool.
+   * The most read connections that the pool opens, which it opens as reads need them. The count is zero while a key
+   * change has closed the readers, and for a driver that opens one connection per file.
    */
   get readerCount(): number {
     return this.runtime.pool.readerCount

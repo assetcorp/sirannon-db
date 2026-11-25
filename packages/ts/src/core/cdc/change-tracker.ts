@@ -20,7 +20,8 @@ import { StatementCache } from './statement-cache.js'
 import { cdcTriggersMatch, dropCdcTriggers, installCdcTriggers } from './trigger-sql.js'
 import type { ChangeTrackerOptions, WatchedTableInfo } from './types.js'
 
-const DEFAULT_RETENTION_MS = 3_600_000
+/** How long the change log keeps a change when the tracker's options set no retention, which is one hour. @internal */
+export const DEFAULT_CHANGE_LOG_RETENTION_MS = 3_600_000
 const DEFAULT_POLL_BATCH_SIZE = 1000
 const IDENTIFIER_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/
 
@@ -47,7 +48,7 @@ export class ChangeTracker {
   private watchQueue: Promise<void> = Promise.resolve()
 
   constructor(options?: ChangeTrackerOptions) {
-    this.retentionMs = options?.retention ?? DEFAULT_RETENTION_MS
+    this.retentionMs = options?.retention ?? DEFAULT_CHANGE_LOG_RETENTION_MS
     this.changesTable = options?.changesTable ?? CHANGES_TABLE
     this.pollBatchSize = options?.pollBatchSize ?? DEFAULT_POLL_BATCH_SIZE
 
@@ -321,6 +322,15 @@ export class ChangeTracker {
   /** @internal */
   clearPruneBoundary(source: PruneBoundarySource): void {
     this.pruneBoundaries.clear(source)
+  }
+
+  /**
+   * Registers a function that the tracker calls when a prune boundary moves, so that a change feed prunes again.
+   *
+   * @internal
+   */
+  onPruneBoundaryChange(listener: () => void): () => void {
+    return this.pruneBoundaries.onChange(listener)
   }
 
   /** @internal */

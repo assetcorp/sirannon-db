@@ -18,6 +18,7 @@ SQLiteDriver {
   createWriterContext?(): WriterContext
   createBackupEngine?(): BackupEngine
   resolveExtensionPath?(extensionPath: string): string
+  watchDatabaseFile?(path: string, onChange: () -> void, onLost: () -> void): DisposeFn or null
 }
 ```
 
@@ -28,6 +29,7 @@ SQLiteDriver {
 | `createWriterContext` | Produces a [WriterContext](#writercontext) that distinguishes the caller holding the writer from one waiting on it. |
 | `createBackupEngine` | Produces a backup engine: it copies a database, schedules that copy, and builds the checkpoint cycle. See [Backups](02-core.md#backups). |
 | `resolveExtensionPath` | Resolves an extension path to an absolute path, so the dynamic linker cannot search the system library paths; required when `capabilities.extensions` is `true`. |
+| `watchDatabaseFile` | Watches a database file and its journals for writes from any process, and calls `onChange` after each write. The driver must report every write, including one whose file event the runtime dropped. When the watch fails, the driver must call `onLost` once and then stop calling `onChange`. It returns the function that stops the watch, or null when the runtime cannot watch the file. See [Polling and Cleanup](02-core.md#polling-and-cleanup). |
 
 ### DriverCapabilities
 

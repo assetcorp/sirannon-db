@@ -122,8 +122,26 @@ export interface LifecycleConfig {
 export interface DatabaseOptions {
   /** Whether to open the database in read-only mode. */
   readOnly?: boolean
-  /** The number of read connections in the pool; the default is 4. */
+  /**
+   * The most read connections that the pool opens; the default is 4. A
+   * writable database opens its first reader when a read needs one, and opens
+   * another whenever every open reader is busy, up to this number.
+   */
   readPoolSize?: number
+  /**
+   * How long, in milliseconds, a database can go without a read before
+   * Sirannon closes its readers, and without a read or a write before Sirannon
+   * closes its writer; the default is 30_000. An idle database then holds no
+   * connection while its subscriptions and devices stay connected, and the
+   * next read, write, or change to the file opens a connection again. A
+   * read-only database keeps its first reader open. A database keeps its
+   * writer open when it has `backups` or `writerWorker`, an in-memory or URI
+   * path, a running replication engine, or a backup copy or key change under
+   * way. A setting that a `PRAGMA` statement changes on a
+   * connection lasts until that connection closes. `0` keeps every connection
+   * open until the database closes.
+   */
+  connectionIdleTimeout?: number
   /** Whether to open the database in WAL mode; the default is true. */
   walMode?: boolean
   /**
@@ -131,7 +149,13 @@ export interface DatabaseOptions {
    * restores this level after every bulk load.
    */
   synchronous?: SynchronousLevel
-  /** How often Sirannon polls the change log, in milliseconds; the default is 50. */
+  /**
+   * The shortest gap, in milliseconds, between two reads of the change log;
+   * the default is 50. Sirannon reads the log after each write through this
+   * database, and after the driver reports a write to the file from another
+   * connection. A driver that cannot watch the file falls back to reading the
+   * log once per interval while the database has a subscriber.
+   */
   cdcPollInterval?: number
   /** How long Sirannon keeps change-log entries, in milliseconds; the default is 3_600_000, one hour. */
   cdcRetention?: number

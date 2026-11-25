@@ -117,7 +117,7 @@ The device acknowledges what it holds durably so that the server advances the de
 { type: 'ack', id, deviceId, seq }  ->  result { acked: true, seq }
 ```
 
-`seq` is a decimal string. The acknowledgement upserts the device cursor monotonically. A device acknowledges only a sequence it has committed, whether staged or applied, never the baseline cursor the subscription started from. It acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit while more than half the delivery window is outstanding.
+`seq` is a decimal string. The acknowledgement upserts the device cursor monotonically. The server must send the `result` only after the transaction that writes the cursor commits, and it may write the acknowledgements of several devices in one transaction (recommended at most 5,000 per transaction, with at least 200 ms between the starts of two transactions). The server must fail an acknowledgement with `DATABASE_CLOSED` when the database closes before that write. A device acknowledges only a sequence it has committed, whether staged or applied, never the baseline cursor the subscription started from. It acknowledges on a debounce (recommended 2,000 ms), and immediately after a commit while more than half the delivery window is outstanding.
 
 A server accepts an acknowledgement only for a device for which the same connection holds a subscription, and must fail every other acknowledgement with `DEVICE_NOT_SUBSCRIBED`. A device must hold its acknowledgements until the server confirms the subscription on the connection that carries it, and must send a refused acknowledgement again once it subscribes afresh.
 

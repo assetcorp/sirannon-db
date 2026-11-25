@@ -410,6 +410,8 @@ export class ChangeTracker {
     get cursor(): bigint;
     // @internal
     getMinSeq(conn: SQLiteConnection): Promise<bigint | null>;
+    // @internal
+    onPruneBoundaryChange(listener: () => void): () => void;
     // @internal (undocumented)
     poll(conn: SQLiteConnection): Promise<ChangeEvent[]>;
     // @internal (undocumented)
@@ -521,9 +523,7 @@ export interface ConnectionMetrics {
 
 // @internal
 export class ConnectionPool {
-    // (undocumented)
     acquireReader(): SQLiteConnection;
-    // (undocumented)
     acquireWriter(): SQLiteConnection;
     // (undocumented)
     close(): Promise<void>;
@@ -535,12 +535,14 @@ export class ConnectionPool {
     // (undocumented)
     get isReadOnly(): boolean;
     leaseReader(): SQLiteConnection;
-    // (undocumented)
     get readerCount(): number;
+    readerReady(): Promise<void> | null;
     releaseReader(): void;
     reopen(): Promise<void>;
     get suspended(): boolean;
+    whileConnectionsOpen<T>(operation: () => Promise<T>): Promise<T>;
     withReader<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
+    writerReady(): Promise<void> | null;
 }
 
 // @public
@@ -550,8 +552,13 @@ export class ConnectionPoolError extends SirannonError {
 
 // @internal
 export interface ConnectionPoolOptions {
+    admitReader?: (reader: SQLiteConnection, add: () => void) => Promise<void>;
+    closeIdleWriterExclusively?: (close: () => Promise<void>) => void;
+    // (undocumented)
+    connectionIdleTimeout?: number;
     // (undocumented)
     driver: SQLiteDriver;
+    keepsWriterOpen?: () => boolean;
     // (undocumented)
     keyring?: EncryptionKeyring;
     // (undocumented)
@@ -609,8 +616,6 @@ export class Database extends DatabaseColumnQueries {
         sql: string;
         params?: Params;
     }[]): Promise<ExecuteResult[]>;
-    // @internal
-    holdChangeLogPruning(source: PruneBoundarySource, seq: bigint | null): void;
     live<T = Record<string, unknown>>(sql: string, params?: Params, options?: LiveQueryOptions): Promise<LiveQuery<T>>;
     loadExtension(extensionPath: string): Promise<void>;
     migrate(migrations: Migration[]): Promise<MigrationResult>;
@@ -624,8 +629,6 @@ export class Database extends DatabaseColumnQueries {
     queryForWire(sql: string, params?: Params, options?: QueryOptions): Promise<unknown[]>;
     queryOne<T = Record<string, unknown>>(sql: string, params?: Params, options?: QueryOptions): Promise<T | undefined>;
     rollback(migrations: Migration[], version?: number): Promise<RollbackResult>;
-    // @internal
-    runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void>;
     transaction<T>(fn: (tx: Transaction) => Promise<T>): Promise<T>;
     unwatch(table: string): Promise<void>;
     watch(table: string): Promise<void>;
@@ -653,6 +656,20 @@ export class DatabaseBackups extends DatabaseLifecycle {
 }
 
 // @public
+export class DatabaseChangeFeeds extends DatabaseBackups {
+    // @internal
+    get cdcPollInterval(): number;
+    // @internal
+    get changeSignal(): DatabaseChangeSignal;
+    // @internal
+    holdChangeLogPruning(source: PruneBoundarySource, seq: bigint | null): void;
+    // @internal
+    readChangeLog<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T>;
+    // @internal
+    runCdcMaintenance(op: (writer: SQLiteConnection) => Promise<unknown>): Promise<void>;
+}
+
+// @public
 export type DatabaseCloseHook = (ctx: ConnectionHookContext) => void;
 
 // @public
@@ -677,7 +694,7 @@ export interface DatabaseCopyStep {
 }
 
 // @public
-export class DatabaseEncryption extends DatabaseBackups {
+export class DatabaseEncryption extends DatabaseChangeFeeds {
     // @internal
     assertNoReplicationEngine(operation: string): void;
     changeEncryption(change: EncryptionChange): Promise<EncryptionStatus>;
@@ -746,6 +763,7 @@ export interface DatabaseOptions {
     backups?: BackupCycleOptions;
     cdcPollInterval?: number;
     cdcRetention?: number;
+    connectionIdleTimeout?: number;
     deviceCursorRetention?: number;
     encryption?: EncryptionOptions;
     maxChangesHeldForDevice?: number;
@@ -1459,6 +1477,7 @@ export interface SQLiteDriver {
     open(path: string, options?: OpenOptions): Promise<SQLiteConnection>;
     resolveExtensionPath?(extensionPath: string): string;
     startWriterHost?(path: string, options: OpenOptions, hostOptions?: WorkerHostOptions): Promise<SQLiteConnection>;
+    watchDatabaseFile?(path: string, onChange: () => void, onLost: () => void): (() => void) | null;
     readonly worker?: DriverWorkerEntry;
 }
 

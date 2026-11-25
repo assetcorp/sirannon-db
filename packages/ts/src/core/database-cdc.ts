@@ -1,14 +1,13 @@
+import { toError } from './caller-callbacks.js'
 import { CdcAwareTransaction, type CdcTransactionState } from './cdc/cdc-aware-transaction.js'
+import { type ChangeFeed, startChangeFeed } from './cdc/change-feed.js'
+import { pruneChangeLog } from './cdc/change-log-prune.js'
+import type { DatabaseChangeSignal } from './cdc/change-signal.js'
 import { ChangeTracker } from './cdc/change-tracker.js'
 import type { DeviceRetentionPolicy } from './cdc/device-retention.js'
 import { ensureCdcEpoch } from './cdc/epoch.js'
 import { readAtPosition } from './cdc/read-position.js'
-import {
-  type ChangeDispatchObserver,
-  SubscriptionBuilderImpl,
-  SubscriptionManager,
-  startPolling,
-} from './cdc/subscription.js'
+import { type ChangeDispatchObserver, SubscriptionBuilderImpl, SubscriptionManager } from './cdc/subscription.js'
 import type { SQLiteConnection } from './driver/types.js'
 import type { StampStatement } from './sync/stamper.js'
 import { SyncStamper } from './sync/stamper.js'
@@ -18,24 +17,66 @@ import { runInSavepoint, runWriterTransaction, type WriterTransactionRunner } fr
 
 type RunExclusive = <T>(op: () => Promise<T>) => Promise<T>
 
+const MAX_CONSECUTIVE_POLL_FAILURES = 10
+
+/**
+ * The locks, connections, and settings that a {@link DatabaseCdcController} works through.
+ *
+ * @internal
+ */
+export interface DatabaseCdcDeps {
+  /** Holds the writer for an operation that can commit a write, and fires the change signal once it ends. */
+  runExclusive: RunExclusive
+  /** Holds the writer for a read of the change log or a prune, without firing the change signal. */
+  runWithoutChangeSignal: RunExclusive
+  /**
+   * Runs a read of the change log on a reader connection, or on the writer under the lock while the database has no
+   * reader or a key change has closed its readers, so that a read never contends with a write for the writer.
+   */
+  readChangeLog: <T>(read: (conn: SQLiteConnection) => Promise<T>) => Promise<T>
+  acquireWriter: () => SQLiteConnection
+  signal: DatabaseChangeSignal
+  pollInterval: number
+  retention: number
+  openSnapshotConnection: (() => Promise<SQLiteConnection>) | null
+  deviceRetention: DeviceRetentionPolicy
+  onDispatched?: ChangeDispatchObserver
+}
+
 export class DatabaseCdcController {
   private tracker: ChangeTracker | null = null
   private subscriptionManager: SubscriptionManager | null = null
   private liveConnRequest: Promise<SQLiteConnection> | null = null
-  private stopPolling: (() => void) | null = null
+  private feed: ChangeFeed | null = null
+  private feedSettling: Promise<void> | null = null
+  private startsWhenFeedSettles = false
   private stamper: SyncStamper | null = null
   private epochRequest: Promise<string> | null = null
   private readonly liveConnectionListeners = new Set<() => void>()
+  private readonly runExclusive: RunExclusive
+  private readonly acquireWriter: () => SQLiteConnection
+  private readonly openSnapshotConnection: (() => Promise<SQLiteConnection>) | null
 
-  constructor(
-    private readonly runExclusive: RunExclusive,
-    private readonly acquireWriter: () => SQLiteConnection,
-    private readonly pollInterval: number,
-    private readonly retention: number,
-    private readonly openSnapshotConnection: (() => Promise<SQLiteConnection>) | null,
-    private readonly deviceRetention: DeviceRetentionPolicy,
-    private readonly onDispatched?: ChangeDispatchObserver,
-  ) {}
+  constructor(private readonly deps: DatabaseCdcDeps) {
+    this.runExclusive = deps.runExclusive
+    this.acquireWriter = deps.acquireWriter
+    this.openSnapshotConnection = deps.openSnapshotConnection
+  }
+
+  /** The signal that fires when this database may hold changes that a change poller has not read yet. */
+  get changeSignal(): DatabaseChangeSignal {
+    return this.deps.signal
+  }
+
+  /** The shortest time between two reads of the change log, in milliseconds. */
+  get pollInterval(): number {
+    return this.deps.pollInterval
+  }
+
+  /** Runs a read of the change log on a connection that leaves the writer free, as {@link DatabaseCdcDeps.readChangeLog} describes. */
+  readChangeLog<T>(read: (conn: SQLiteConnection) => Promise<T>): Promise<T> {
+    return this.deps.readChangeLog(read)
+  }
 
   ensureEpoch(): Promise<string> {
     this.epochRequest ??= this.runExclusive(() => ensureCdcEpoch(this.acquireWriter())).catch((err: unknown) => {
@@ -117,7 +158,7 @@ export class DatabaseCdcController {
    */
   resumeOnReopenedPool(): void {
     if (this.openSnapshotConnection === null) this.replanLiveQueries()
-    if (this.stopPolling === null) return
+    if (this.feed === null) return
     this.stop()
     this.ensurePolling()
   }
@@ -237,32 +278,53 @@ export class DatabaseCdcController {
   }
 
   stop(): void {
-    if (this.stopPolling) {
-      this.stopPolling()
-      this.stopPolling = null
-    }
+    this.startsWhenFeedSettles = false
+    const feed = this.feed
+    if (feed === null) return
+    this.feed = null
+    feed.stop()
+    const settling = feed.settled().then(() => {
+      if (this.feedSettling !== settling) return
+      this.feedSettling = null
+      if (!this.startsWhenFeedSettles) return
+      this.startsWhenFeedSettles = false
+      this.ensurePolling()
+    })
+    this.feedSettling = settling
   }
 
   private ensure(): { tracker: ChangeTracker; subscriptions: SubscriptionManager } {
-    const tracker = this.tracker ?? new ChangeTracker({ retention: this.retention })
-    const subscriptions = this.subscriptionManager ?? new SubscriptionManager(this.onDispatched)
+    const tracker = this.tracker ?? new ChangeTracker({ retention: this.deps.retention })
+    const subscriptions = this.subscriptionManager ?? new SubscriptionManager(this.deps.onDispatched)
     this.tracker = tracker
     this.subscriptionManager = subscriptions
     return { tracker, subscriptions }
   }
 
   private ensurePolling(): void {
-    if (this.stopPolling) return
-    if (!this.tracker || !this.subscriptionManager) return
+    if (this.feed) return
+    if (this.feedSettling !== null) {
+      this.startsWhenFeedSettles = true
+      return
+    }
+    const tracker = this.tracker
+    const manager = this.subscriptionManager
+    if (!tracker || !manager) return
 
-    this.stopPolling = startPolling(
-      () => this.acquireWriter(),
-      this.tracker,
-      this.subscriptionManager,
-      this.pollInterval,
-      undefined,
-      this.runExclusive,
-      this.deviceRetention,
-    )
+    const { runWithoutChangeSignal, readChangeLog, deviceRetention, retention } = this.deps
+    this.feed = startChangeFeed({
+      tracker,
+      manager,
+      signal: this.deps.signal,
+      intervalMs: this.deps.pollInterval,
+      readChanges: () => readChangeLog(conn => tracker.poll(conn)),
+      prune: () =>
+        runWithoutChangeSignal(() => pruneChangeLog(this.acquireWriter(), tracker, deviceRetention, retention)),
+      onFailure: (error, consecutiveFailures) => {
+        if (consecutiveFailures < MAX_CONSECUTIVE_POLL_FAILURES) return true
+        manager.reportError(toError(error))
+        return false
+      },
+    })
   }
 }

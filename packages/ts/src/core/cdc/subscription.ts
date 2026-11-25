@@ -1,12 +1,5 @@
-import { invokeCallerCallback, reportCallerFailure, toError } from '../caller-callbacks.js'
-import type { SQLiteConnection } from '../driver/types.js'
+import { invokeCallerCallback, reportCallerFailure } from '../caller-callbacks.js'
 import type { ChangeEvent, Subscription, SubscriptionBuilder, SubscriptionOptions } from '../types.js'
-import type { ChangeTracker } from './change-tracker.js'
-import {
-  applyDeviceCursorBoundary,
-  DEFAULT_DEVICE_CURSOR_RETENTION_MS,
-  type DeviceRetentionPolicy,
-} from './device-retention.js'
 
 interface InternalSubscription {
   id: number
@@ -28,6 +21,26 @@ export class SubscriptionManager {
   private readonly byTable = new Map<string, Set<number>>()
   private readonly foldedNames = new Map<string, string>()
   private readonly batchEndListeners = new Set<(atTxBoundary: boolean) => void>()
+  private readonly activityListeners = new Set<(active: boolean) => void>()
+
+  /**
+   * Registers a function that the manager calls with `true` when it gains its first subscription, and with `false`
+   * when it loses its last one, so that a change feed reads the log only while somebody listens.
+   *
+   * @param listener - The function to call.
+   * @returns A function that removes the registration.
+   */
+  onActivityChange(listener: (active: boolean) => void): () => void {
+    this.activityListeners.add(listener)
+    return () => {
+      this.activityListeners.delete(listener)
+    }
+  }
+
+  /** The identifier that the next subscription receives, which {@link SubscriptionManager.dispatch} compares against. */
+  get nextSubscriptionId(): number {
+    return this.nextId
+  }
 
   subscribe(
     table: string,
@@ -45,10 +58,11 @@ export class SubscriptionManager {
       this.byTable.set(key, tableSet)
     }
     tableSet.add(id)
+    if (this.subscriptions.size === 1) this.notifyActivity(true)
 
     return {
       unsubscribe: () => {
-        this.subscriptions.delete(id)
+        if (!this.subscriptions.delete(id)) return
         const set = this.byTable.get(key)
         if (set) {
           set.delete(id)
@@ -56,14 +70,24 @@ export class SubscriptionManager {
             this.byTable.delete(key)
           }
         }
+        if (this.subscriptions.size === 0) this.notifyActivity(false)
       },
     }
   }
 
-  dispatch(events: ChangeEvent[]): void {
+  /**
+   * Delivers each event to every matching subscription.
+   *
+   * @param events - The events, in log order.
+   * @param subscribedBefore - The value of {@link SubscriptionManager.nextSubscriptionId} when the batch that holds
+   * these events was read, so that a subscription made while a feed delivers the batch in slices skips the rest of
+   * it, because that subscription starts from the tracker's cursor, which already covers the whole batch.
+   */
+  dispatch(events: ChangeEvent[], subscribedBefore?: number): void {
     for (const event of events) {
       const ids = this.byTable.get(this.foldLoggedName(event.table)) ?? NO_SUBSCRIBERS
-      const firstIdAfterThisEvent = this.nextId
+      const firstIdAfterThisEvent =
+        subscribedBefore === undefined ? this.nextId : Math.min(subscribedBefore, this.nextId)
       let deliveredTo = 0
       for (const id of ids) {
         if (id >= firstIdAfterThisEvent) continue
@@ -105,6 +129,12 @@ export class SubscriptionManager {
     return this.byTable.get(table.toLowerCase())?.size ?? 0
   }
 
+  private notifyActivity(active: boolean): void {
+    for (const listener of [...this.activityListeners]) {
+      invokeCallerCallback(() => listener(active))
+    }
+  }
+
   private foldLoggedName(table: string): string {
     let folded = this.foldedNames.get(table)
     if (folded === undefined) {
@@ -136,73 +166,22 @@ export class SubscriptionBuilderImpl implements SubscriptionBuilder {
   }
 }
 
-export function startPolling(
-  connection: () => SQLiteConnection,
-  tracker: ChangeTracker,
-  manager: SubscriptionManager,
-  intervalMs: number,
-  onError?: (err: Error) => void,
-  runExclusive?: <T>(operation: () => Promise<T>) => Promise<T>,
-  deviceRetention: DeviceRetentionPolicy = {
-    cursorRetentionMs: DEFAULT_DEVICE_CURSOR_RETENTION_MS,
-    maxChangesHeldForDevice: 0,
-  },
-): () => void {
-  let consecutiveErrors = 0
-  let tickCount = 0
-  let polling = false
-  const MAX_CONSECUTIVE_ERRORS = 10
-  const CLEANUP_INTERVAL_TICKS = 100
+const enteringVariants = new WeakMap<ChangeEvent, ChangeEvent>()
+const leavingVariants = new WeakMap<ChangeEvent, ChangeEvent>()
 
-  const exclusive = runExclusive ?? (<T>(operation: () => Promise<T>) => operation())
-
-  const tick = async () => {
-    if (manager.size === 0) return
-    if (polling) return
-    polling = true
-
-    try {
-      const events = await exclusive(() => tracker.poll(connection()))
-      if (events.length > 0) {
-        manager.dispatch(events)
-      }
-      manager.endBatch(tracker.pollEndedAtTxBoundary)
-      consecutiveErrors = 0
-
-      tickCount++
-      if (tickCount >= CLEANUP_INTERVAL_TICKS) {
-        tickCount = 0
-        await exclusive(async () => {
-          const conn = connection()
-          await applyDeviceCursorBoundary(conn, tracker, deviceRetention)
-          await tracker.cleanup(conn)
-        })
-      }
-    } catch (err) {
-      consecutiveErrors++
-      const failure = toError(err)
-      if (onError) {
-        onError(failure)
-      }
-      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-        stop()
-        manager.reportError(failure)
-      }
-    } finally {
-      polling = false
-    }
-  }
-
-  const interval = setInterval(tick, intervalMs) as ReturnType<typeof setInterval> & { unref?: () => void }
-  interval.unref?.()
-
-  const stop = () => {
-    clearInterval(interval)
-  }
-
-  return stop
-}
-
+/**
+ * Returns the event as a subscription with a filter sees it: the event itself when the row matches the filter before
+ * and after the change, an insert when an update moves the row into the filter, a delete when an update moves it out,
+ * and `null` when the row matches on neither side.
+ *
+ * Every subscription receives the same insert or delete object for one event, so that a server encodes it for the
+ * wire once however many subscriptions receive it, and no subscription may change it.
+ *
+ * @param event - The event from the change log.
+ * @param filter - The column values that the subscription matches.
+ * @returns The event that the subscription receives, or `null`.
+ * @internal
+ */
 export function filteredChange(event: ChangeEvent, filter: Record<string, unknown>): ChangeEvent | null {
   const matchedBefore = event.type !== 'insert' && event.oldRow !== undefined && rowMatchesFilter(event.oldRow, filter)
   const matchedAfter = event.type !== 'delete' && rowMatchesFilter(event.row, filter)
@@ -212,13 +191,22 @@ export function filteredChange(event: ChangeEvent, filter: Record<string, unknow
 
   if (matchedAfter) {
     if (event.type === 'insert') return event
-    const entering: ChangeEvent = { ...event, type: 'insert' }
-    entering.oldRow = undefined
+    let entering = enteringVariants.get(event)
+    if (entering === undefined) {
+      entering = { ...event, type: 'insert' }
+      entering.oldRow = undefined
+      enteringVariants.set(event, entering)
+    }
     return entering
   }
 
   if (event.type === 'delete') return event
-  return { ...event, type: 'delete', row: {} }
+  let leaving = leavingVariants.get(event)
+  if (leaving === undefined) {
+    leaving = { ...event, type: 'delete', row: {} }
+    leavingVariants.set(event, leaving)
+  }
+  return leaving
 }
 
 function rowMatchesFilter(row: Record<string, unknown>, filter: Record<string, unknown>): boolean {

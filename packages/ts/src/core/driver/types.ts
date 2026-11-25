@@ -358,4 +358,19 @@ export interface SQLiteDriver {
   resolveExtensionPath?(extensionPath: string): string
   /** The file operations that a key change and its recovery perform, which a driver for a runtime with a file system supplies. */
   readonly files?: DatabaseFileSystem
+  /**
+   * Watches a database file and its journals for writes from any process, and calls `onChange` after each one, so
+   * that a change subscription reads the change log only when the file changes. Sirannon reads the log for no other
+   * reason while the watch works, so the method has to report every write, including one whose file event the
+   * runtime dropped, which it can find by comparing the files' sizes and modification times on a timer.
+   *
+   * Sirannon reads the change log once per `cdcPollInterval` instead when the driver has no such method, when the
+   * method returns `null`, and after it calls `onLost`.
+   *
+   * @param path - The database file.
+   * @param onChange - The function to call after a write, which returns at once.
+   * @param onLost - The function to call once when the watch fails, after which the driver stops calling `onChange`.
+   * @returns The function that stops the watch, or `null` when the runtime cannot watch this file.
+   */
+  watchDatabaseFile?(path: string, onChange: () => void, onLost: () => void): (() => void) | null
 }

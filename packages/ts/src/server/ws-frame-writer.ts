@@ -3,7 +3,7 @@ import type { ChangeEvent } from '../core/types.js'
 import { clientErrorMessage } from './client-error.js'
 import type { WSServerMessage } from './protocol.js'
 import type { WSConnection, WSSendOutcome } from './ws-connection.js'
-import { wireChangeEvent } from './ws-device-frames.js'
+import { encodedChangeEvent } from './ws-device-frames.js'
 
 /**
  * Writes the server's messages to WebSocket connections, and passes each connection that refuses a frame to
@@ -86,6 +86,13 @@ export class WSFrameWriter {
    * @returns Whether the connection sent the frame, buffered it, or refused it.
    */
   sendChange(conn: WSConnection, subscriptionId: string, event: ChangeEvent): WSSendOutcome {
-    return this.send(conn, { type: 'change', id: subscriptionId, event: wireChangeEvent(event) })
+    let json: string
+    try {
+      json = encodedChangeEvent(event).json
+    } catch {
+      this.onDropped(conn)
+      return 'dropped'
+    }
+    return this.sendText(conn, `{"type":"change","id":${JSON.stringify(subscriptionId)},"event":${json}}`)
   }
 }

@@ -1,10 +1,5 @@
 import { SEQ_STRING_RE } from '../core/sync/validators.js'
-import {
-  advanceHeldDeviceCursor,
-  DEVICE_CURSOR_DROPPED_REASON,
-  upsertDeviceAck,
-  WS_CLOSE_DEVICE_CURSOR_DROPPED,
-} from './device-cursors.js'
+import { DEVICE_CURSOR_DROPPED_REASON, WS_CLOSE_DEVICE_CURSOR_DROPPED } from './device-cursors.js'
 import { DEVICE_SYNC_NOT_ACCEPTED_MESSAGE } from './http-common.js'
 import { isValidDeviceId } from './sync-protocol.js'
 import type { WSConnection } from './ws-connection.js'
@@ -43,18 +38,17 @@ export async function handleAckMessage(
     return
   }
 
+  const ctx = deps.cdc.get(state.databaseId)
+  if (ctx === undefined) {
+    deps.sendError(conn, id, 'DATABASE_CLOSED', `Database '${state.databaseId}' is closed`)
+    return
+  }
+
   const seq = BigInt(msg.seq)
   const cursorHeld = streams.some(stream => stream.holdsCursor)
-  let cursorDropped = false
   try {
-    await state.database.runCdcMaintenance(async writer => {
-      if (!cursorHeld) {
-        await upsertDeviceAck(writer, deviceId, seq)
-        return
-      }
-      cursorDropped = !(await advanceHeldDeviceCursor(writer, deviceId, seq))
-    })
-    if (cursorDropped) {
+    const stored = await ctx.acks.record(deviceId, seq, cursorHeld)
+    if (!stored) {
       conn.close(WS_CLOSE_DEVICE_CURSOR_DROPPED, DEVICE_CURSOR_DROPPED_REASON)
       return
     }
@@ -62,6 +56,9 @@ export async function handleAckMessage(
       stream.onAck(seq)
     }
     deps.sendResult(conn, id, { acked: true, seq: seq.toString() })
+    for (const stream of streams) {
+      stream.watchSocket()
+    }
   } catch (err) {
     deps.sendSirannonError(conn, id, err)
   }

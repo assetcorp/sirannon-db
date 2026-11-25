@@ -21,8 +21,19 @@ export class WriterLock {
   private readonly tracksCallers: boolean
   private callbacksHolding = 0
   private repair: (() => Promise<void>) | null = null
+  private readonly releaseListeners = new Set<() => void>()
 
-  constructor(context?: WriterContext) {
+  /**
+   * @param context - The driver's async context, which tells the calls that a holder makes from those of other
+   * callers.
+   * @param prepareHold - Called at the start of every hold, before its operation, and returns `null` when the hold
+   * can start at once or the promise that the hold waits for first, such as the reopen of a writer that the pool
+   * closed while idle.
+   */
+  constructor(
+    context?: WriterContext,
+    private readonly prepareHold: () => Promise<void> | null = noPreparation,
+  ) {
     this.context = context ?? UNTRACKED
     this.tracksCallers = context !== undefined
   }
@@ -61,14 +72,70 @@ export class WriterLock {
     )
   }
 
+  /**
+   * Holds the writer for an operation, after every earlier hold has ended, and calls each release listener once the
+   * operation settles, because the operation may have committed a write.
+   *
+   * @param operation - The work to do while holding the writer.
+   * @returns What `operation` returns.
+   */
   run<T>(operation: () => Promise<T>): Promise<T> {
+    return this.hold(operation, this.notifyReleased)
+  }
+
+  /**
+   * Holds the writer as {@link WriterLock.run} does, without calling the release listeners, for an operation that
+   * commits nothing to the change log, such as a read of the change log or a write to an internal table.
+   *
+   * @param operation - The work to do while holding the writer.
+   * @returns What `operation` returns.
+   */
+  runWithoutChangeSignal<T>(operation: () => Promise<T>): Promise<T> {
+    return this.hold(operation, swallow)
+  }
+
+  /**
+   * Registers a function that the lock calls each time a hold through {@link WriterLock.run} ends, so that a change
+   * poller can read the change log once the write commits. The lock calls it after the hold settles, so the call adds
+   * no time to the hold, and it ignores anything that the function throws.
+   *
+   * @param listener - The function to call, which must return at once.
+   * @returns A function that removes the registration.
+   */
+  onRelease(listener: () => void): () => void {
+    this.releaseListeners.add(listener)
+    return () => {
+      this.releaseListeners.delete(listener)
+    }
+  }
+
+  private hold<T>(operation: () => Promise<T>, released: () => void): Promise<T> {
     if (this.context.isActive()) {
       return operation()
     }
-    const enter = () => this.context.run(this.repair === null ? operation : () => this.repairThen(operation))
+    const enter = () => this.context.run(() => this.enter(operation))
     const ticket = this.tail.then(enter, enter)
-    this.tail = ticket.then(swallow, swallow)
+    this.tail = ticket.then(released, released)
     return ticket
+  }
+
+  private enter<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.repair === null ? operation : () => this.repairThen(operation)
+    let preparing: Promise<void> | null
+    try {
+      preparing = this.prepareHold()
+    } catch (err) {
+      return Promise.reject(err)
+    }
+    return preparing === null ? run() : preparing.then(run)
+  }
+
+  private readonly notifyReleased = (): void => {
+    for (const listener of this.releaseListeners) {
+      try {
+        listener()
+      } catch {}
+    }
   }
 
   repairBeforeNextHold(repair: () => Promise<void>): void {
@@ -99,3 +166,7 @@ export class WriterLock {
 }
 
 function swallow(): void {}
+
+function noPreparation(): null {
+  return null
+}

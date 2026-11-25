@@ -13,6 +13,11 @@ export class RegisteredReplicationEngines {
 
   constructor(private readonly databaseId: string) {}
 
+  /** Returns `true` while an engine runs or an operation replaces the database file. */
+  get active(): boolean {
+    return this.count > 0 || this.replacements.size > 0
+  }
+
   /**
    * Records one running engine, and returns the call that removes the record, which does nothing after its first
    * call.

@@ -8,6 +8,7 @@ import { EncryptionError } from '../../core/encryption/errors.js'
 import { reportEncryptedPageFailures } from '../../core/encryption/page-errors.js'
 import { WriterWorker } from '../../core/worker/host.js'
 import { asyncLocalWriterContext } from '../async-local-writer-context.js'
+import { watchNodeDatabaseFile } from '../node-file-watch.js'
 import { nodeDatabaseFiles } from '../node-files.js'
 import { nodeBackupEngine, nodeResolveExtensionPath, nodeStreamingSupport } from '../node-runtime.js'
 import { readWithColumns } from './column-reads.js'
@@ -257,6 +258,7 @@ export function betterSqlite3(driverOptions?: BetterSqlite3Options): SQLiteDrive
     },
     worker: workerEntry,
     files: nodeDatabaseFiles,
+    watchDatabaseFile: watchNodeDatabaseFile,
     startWriterHost: async (path, options, hostOptions) => {
       const host = await WriterWorker.start(workerEntry, path, options, { ...hostOptions, countsRows: rowCounts })
       return host.connection

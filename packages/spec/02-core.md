@@ -112,6 +112,7 @@ Database {
 DatabaseOptions {
   readOnly?:        boolean          (default: false)
   readPoolSize?:    number           (default: 4, recommended)
+  connectionIdleTimeout?: number     (default: 30_000 ms, recommended)
   walMode?:         boolean          (default: true)
   synchronous?:     SynchronousLevel (default: 'normal')
   cdcPollInterval?: number           (default: 50 ms, recommended)
@@ -159,18 +160,21 @@ The pool holds one writer connection and a set of reader connections.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `readPoolSize` | 4 (recommended) | Reader connection count. |
+| `readPoolSize` | 4 (recommended) | The most reader connections that the pool opens. |
+| `connectionIdleTimeout` | 30,000 ms (recommended) | How long the pool goes without a read before it closes its readers, and without a read or a write before it closes its writer; `0` keeps every connection open. |
 | `readOnly` | `false` | Skip the writer connection. |
 | `walMode` | `true` | WAL mode on the writer. |
 
 Creation rules:
 
 1. When not read-only, create one writer with WAL mode.
-2. When the driver reports `multipleConnections`, create `max(readPoolSize, 1)` readers, each opened read-only. Otherwise create no readers and route reads through the writer under the writer lock.
+2. When the driver reports `multipleConnections`, open each reader read-only when a read needs one: on a writable database, open the first reader on the first read and another whenever every open reader is busy, up to `max(readPoolSize, 1)`, and on a read-only database, open the first reader at creation. Otherwise create no readers and route reads through the writer under the writer lock.
 
-`acquireReader` returns the next reader by round-robin, or the writer when no readers exist, and fails with `CONNECTION_POOL_ERROR` when the pool is closed. `acquireWriter` returns the writer and fails with `CONNECTION_POOL_ERROR` when the pool is closed or read-only. `connections` returns the writer and every reader, for work that must apply to the whole pool, and fails with `CONNECTION_POOL_ERROR` when the pool is closed.
+`acquireReader` returns the next open reader by round-robin, or the writer when the driver does not report `multipleConnections`, and fails with `CONNECTION_POOL_ERROR` when the pool is closed. When the pool holds no open reader, an implementation must open one before it acquires a reader for a read. `acquireWriter` returns the writer and fails with `CONNECTION_POOL_ERROR` when the pool is closed or read-only. `connections` returns the writer and every reader, for work that must apply to the whole pool, and fails with `CONNECTION_POOL_ERROR` when the pool is closed.
 
 A writer lock serialises write work on the writer connection, so grouped writes, transactions, migrations, and extension loads never overlap. A backup takes that lock to start its copy and releases it once the copy's first step completes, so writes made after that step run in the gaps between the steps that follow.
+
+Once `connectionIdleTimeout` passes with no read, the pool must wait for the reads under way to settle and then close every reader that a read opened, while the pool of a read-only database leaves its first reader open. Once the timeout passes with no read and no write, the pool closes the writer as well, but it must leave the writer open while the database has `backups` or `writerWorker`, an in-memory or URI path, an active replication engine, or a backup copy or key change under way. The writer lock must open a closed writer once before the next hold, however many callers ask for the writer at the same time. Subscriptions and device connections remain open while the pool holds no connection, since the pool opens a connection again on the next read, write, or change to the file. A setting that a `PRAGMA` statement changes on a connection lasts until the pool closes that connection.
 
 ---
 
@@ -293,7 +297,7 @@ A sequence means nothing in another file's sequence space, so the token carries 
 
 ### Polling and Cleanup
 
-The poll loop reads rows where `seq > lastSeq`, ordered by `seq`, up to a recommended 1000 rows per poll at a recommended 50 ms interval, and skips the query when no subscriber is active. An implementation prunes old rows periodically (recommended every 100 poll ticks) by deleting rows older than the retention window (recommended 3,600,000 ms). Where a prune boundary is set, `seq` also bounds the deletion, so the implementation retains unacknowledged changes.
+The poll loop reads rows where `seq > lastSeq`, ordered by `seq`, up to a recommended 1000 rows per poll, and it reads only while a subscriber is active. It must read after each writer-lock hold that can have committed a write and after the driver's `watchDatabaseFile` reports a write. It must read again after a read that returned changes, leaving at least `cdcPollInterval` between the starts of two reads. When another connection can write to the file and no file watch works, the loop must read once per `cdcPollInterval` as well. The loop must schedule each read after the writer-lock hold ends, so that no read delays a commit. An implementation prunes old rows by deleting rows older than the retention window (recommended 3,600,000 ms), at most once per 100 poll intervals (recommended): after a read that returned changes, after a prune boundary moves, after a device acknowledgement, when a subscription starts, and when the oldest remaining change or device cursor passes its retention window. Where a prune boundary is set, `seq` also bounds the deletion, so the implementation retains unacknowledged changes.
 
 An implementation must stop the loop after a bounded number of consecutive poll failures (recommended 10), and it must pass the last failure to the `onError` of every active subscription.
 

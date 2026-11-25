@@ -211,8 +211,12 @@ describe('a live query', () => {
   it('closes every connection it opens, whether its first read succeeds or fails', async () => {
     const faults = markedReadDriver()
     const sirannon = workspace.registry({ driver: faults.driver })
-    const db = await sirannon.open('connections', workspace.path('connections'), { cdcPollInterval: 5 })
+    const db = await sirannon.open('connections', workspace.path('connections'), {
+      cdcPollInterval: 5,
+      readPoolSize: 1,
+    })
     await seed(db, 3)
+    await db.query('SELECT 1')
     const first = await live(db, MARKED_IN_BUCKET, ['a'])
     await first.close()
     const settled = faults.openConnections()

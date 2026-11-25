@@ -31,10 +31,11 @@ This page lists every option that the registry, the databases that it opens, the
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `readOnly` | `boolean` | `false` | Open in read-only mode |
-| `readPoolSize` | `number` | `4` | Number of read connections |
+| `readPoolSize` | `number` | `4` | Most read connections; a writable database opens each one only when every open reader is busy |
+| `connectionIdleTimeout` | `number` | `30_000` | How long, in ms, a database can go without a read before Sirannon closes its readers, and without a read or a write before it closes its writer, while subscriptions and devices stay connected; the next read, write, or file change opens a connection again. A database keeps its writer with `backups` or `writerWorker`, an in-memory or URI path, a running replication engine, or a backup copy or key change under way; a `PRAGMA` setting lasts until its connection closes, and `0` keeps every connection open |
 | `walMode` | `boolean` | `true` | Enable WAL mode |
 | `synchronous` | `'off' \| 'normal' \| 'full' \| 'extra'` | `'normal'` | Writer durability (`PRAGMA synchronous`); a bulk load restores this level when it finishes |
-| `cdcPollInterval` | `number` | `50` | CDC polling interval in ms |
+| `cdcPollInterval` | `number` | `50` | Shortest gap, in ms, between two reads of the change log; Sirannon reads the log after each write, including a write from another process that the driver reports, and reads it once per interval only when the driver cannot watch the file |
 | `cdcRetention` | `number` | `3_600_000` | CDC retention period in ms |
 | `deviceCursorRetention` | `number` | `2_592_000_000` | How long, in ms, a device's cursor may hold changes back; Sirannon deletes the cursor once the device's last acknowledgement, or the oldest change that the cursor holds back, is older than this |
 | `maxChangesHeldForDevice` | `number` | `0` | Most changes that one device's cursor may hold back; a device further behind resyncs from a snapshot, and `0` sets no limit |

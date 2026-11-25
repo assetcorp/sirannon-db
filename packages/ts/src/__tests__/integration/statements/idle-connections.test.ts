@@ -10,6 +10,7 @@ import { createWorkspace, readRaw, type Workspace } from './harness.js'
 const IDLE_TIMEOUT_MS = 250
 const WRITE_GAP_MS = 25
 const CLOSE_DEADLINE_MS = 5_000
+const READ_POOL_SIZE = 4
 const HELD_READS = 3
 const READERS_AFTER_HELD_READS = 2
 const SEEDED_ORDERS = 5
@@ -32,7 +33,7 @@ async function openOrders(counting: ConnectionCountingDriver, name: string): Pro
   const sirannon = workspace.registry({ driver: counting.driver })
   const db = await sirannon.open(name, workspace.path(name), {
     connectionIdleTimeout: IDLE_TIMEOUT_MS,
-    readPoolSize: 4,
+    readPoolSize: READ_POOL_SIZE,
   })
   await db.execute('CREATE TABLE orders (id INTEGER PRIMARY KEY, total INTEGER NOT NULL)')
   for (let id = 1; id <= SEEDED_ORDERS; id++) {

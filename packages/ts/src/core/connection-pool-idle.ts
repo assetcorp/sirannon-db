@@ -12,7 +12,7 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647
  */
 export class ConnectionIdleClock {
   private lastReadAt = performance.now()
-  private lastUsedAt = this.lastReadAt
+  private lastReadOrWriteAt = this.lastReadAt
   private timer: ReturnType<typeof setTimeout> | null = null
   private stopped = false
 
@@ -26,21 +26,21 @@ export class ConnectionIdleClock {
   ) {}
 
   /** Returns `true` once the pool has gone the whole timeout without a read and without a write. */
-  get expired(): boolean {
-    return this.timeoutMs > 0 && performance.now() - this.lastUsedAt >= this.timeoutMs
+  get readsAndWritesExpired(): boolean {
+    return this.timeoutMs > 0 && this.remainingMsSince(this.lastReadOrWriteAt) <= 0
   }
 
   /** Records a read now, which also counts as a use of the writer, and makes sure that the clock checks again. */
-  read(): void {
+  recordRead(): void {
     const now = performance.now()
     this.lastReadAt = now
-    this.lastUsedAt = now
+    this.lastReadOrWriteAt = now
     this.arm(this.timeoutMs)
   }
 
   /** Records a write now, which leaves the readers' idle time running, and makes sure that the clock checks again. */
-  wrote(): void {
-    this.lastUsedAt = performance.now()
+  recordWrite(): void {
+    this.lastReadOrWriteAt = performance.now()
     this.arm(this.timeoutMs)
   }
 
@@ -50,8 +50,8 @@ export class ConnectionIdleClock {
   }
 
   /** Makes sure that the clock checks again once the pool has gone the timeout without a read and without a write. */
-  checkOnceUnused(): void {
-    this.arm(Math.max(this.timeoutMs - (performance.now() - this.lastUsedAt), 0))
+  checkOnceReadsAndWritesExpire(): void {
+    this.arm(Math.max(this.remainingMsSince(this.lastReadOrWriteAt), 0))
   }
 
   /** Cancels the next check for good. */
@@ -70,9 +70,13 @@ export class ConnectionIdleClock {
     this.timer = timer
   }
 
+  private remainingMsSince(at: number): number {
+    return this.timeoutMs - (performance.now() - at)
+  }
+
   private readonly fire = (): void => {
     this.timer = null
-    const remainingMs = this.timeoutMs - (performance.now() - this.lastReadAt)
+    const remainingMs = this.remainingMsSince(this.lastReadAt)
     if (remainingMs > 0) {
       this.arm(remainingMs)
       return

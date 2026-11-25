@@ -147,7 +147,7 @@ export class DatabaseMigrationController {
 
   applied(): Promise<AppliedMigrationRow[]> {
     const { writerLock, pool } = this.deps
-    if (pool.isReadOnly) return readAppliedMigrations(pool.acquireReader())
+    if (pool.isReadOnly) return pool.withReader(readAppliedMigrations)
     return writerLock.run(() => readAppliedMigrations(pool.acquireWriter()))
   }
 }

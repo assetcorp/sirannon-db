@@ -52,7 +52,7 @@ export class ConnectionPool {
     this.readerCapacity = readerCapacityOf(options)
     this.permanentReaders = permanentReaderCountOf(options)
     this.idleClock = new ConnectionIdleClock(connectionIdleTimeoutOf(options), this.closeIdleConnections)
-    this.idleClock.used()
+    this.idleClock.read()
   }
 
   static async create(options: ConnectionPoolOptions): Promise<ConnectionPool> {
@@ -152,7 +152,7 @@ export class ConnectionPool {
       }
       throw new ConnectionPoolError('No write connection available (database is read-only)')
     }
-    this.idleClock.used()
+    this.idleClock.wrote()
     return this.writer
   }
 
@@ -189,7 +189,7 @@ export class ConnectionPool {
     }
     this.writer = writer
     this.writerClosedWhileIdle = false
-    this.idleClock.used()
+    this.idleClock.wrote()
   }
 
   /**
@@ -210,7 +210,7 @@ export class ConnectionPool {
     this.readsInFlight--
     if (this.readsInFlight > 0) return
     this.readsSettled?.()
-    this.idleClock.used()
+    this.idleClock.read()
   }
 
   private readonly closeIdleConnections = (): void => {
@@ -222,11 +222,9 @@ export class ConnectionPool {
     this.retireIdleReaders()
     const closeExclusively = this.options.closeIdleWriterExclusively
     if (closeExclusively === undefined || this.writer === null) return
-    if (this.options.keepsWriterOpen?.() === true) {
-      this.idleClock.checkAgainLater()
-      return
-    }
-    closeExclusively(this.closeIdleWriter)
+    if (this.options.keepsWriterOpen?.() === true) this.idleClock.checkAgainLater()
+    else if (this.idleClock.expired) closeExclusively(this.closeIdleWriter)
+    else this.idleClock.checkOnceUnused()
   }
 
   private retireIdleReaders(): void {
@@ -375,7 +373,7 @@ export class ConnectionPool {
     this.writerClosedWhileIdle = false
     this.readers = opened.readers
     this.readerIndex = 0
-    this.idleClock.used()
+    this.idleClock.read()
     try {
       await this.options.prepareReopened?.(opened.writer ? [opened.writer, ...opened.readers] : opened.readers)
     } finally {

@@ -1,3 +1,24 @@
+## 0.4.7 (2026-11-25)
+
+### 🩹 Fixes
+
+- **cdc:** detach subscriber callbacks from writer holds ([fb45133](https://github.com/assetcorp/sirannon-db/commit/fb45133))
+- **cdc:** schedule pruning after acknowledgements and restart ([1156c2f](https://github.com/assetcorp/sirannon-db/commit/1156c2f))
+- **cdc:** detach inherited writer holds across databases ([723accd](https://github.com/assetcorp/sirannon-db/commit/723accd))
+- **cdc:** settle a stopped feed before its replacement polls, and hold connections through an extension load ([af0a693](https://github.com/assetcorp/sirannon-db/commit/af0a693))
+- **cdc:** restore the feed, prune, extension-load, and journal-check race fixes ([10ac084](https://github.com/assetcorp/sirannon-db/commit/10ac084))
+- **core:** bound idle timer delays to the runtime limit ([73181fd](https://github.com/assetcorp/sirannon-db/commit/73181fd))
+- **pool:** close idle readers after the timeout without a read, whatever writes continue ([fe06ae5](https://github.com/assetcorp/sirannon-db/commit/fe06ae5))
+- **server:** wake the change feed on writes, batch device acknowledgements, and close idle connections ([9936a36](https://github.com/assetcorp/sirannon-db/commit/9936a36))
+
+### 🔥 Performance
+
+- **drivers:** sweep only the database file and its log with a plain stat ([5969bd7](https://github.com/assetcorp/sirannon-db/commit/5969bd7))
+
+### ❤️ Thank You
+
+- assetcorp @assetcorp
+
 ## 0.4.6 (2026-11-24)
 
 ### 🩹 Fixes
